@@ -1,0 +1,25 @@
+const express = require("express");
+const {
+  getClientsLists,
+  getClientsListById,
+  createClientList,
+  updateClientList,
+  deleteClientList,
+} = require("../controllers/clients.controller");
+
+const router = express.Router();
+
+// GET
+router.get("/lists", getClientsLists);
+router.get("/lists/:id", getClientsListById);
+
+// POST
+router.post("/", createClientList);
+
+// PUT
+router.put("/update/:id", updateClientList);
+
+// DELETE
+router.delete("/delete/:id", deleteClientList);
+
+module.exports = router;
