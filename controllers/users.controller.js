@@ -1,6 +1,120 @@
 const User = require("../models/User.model");
 const mongoose = require("mongoose");
 
+const escapeReg = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const rxExactI = (s) => new RegExp(`^${escapeReg(s)}$`, "i");
+
+const normRoleToken = (s) =>
+  String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+
+/* -------------------------- GET ----------------------- */
+const getUsersSummary = async (req, res) => {
+  try {
+    // (optional) future filters – e.g., ?q=... or ?department=...
+    const where = {};
+    if (req.query.department) where.department = req.query.department;
+
+    const [result] = await User.aggregate([
+      { $match: where },
+      // normalize status/role to be safe even if null/typo (defensive)
+      {
+        $addFields: {
+          _status: {
+            $cond: [
+              { $in: [{ $toLower: { $ifNull: ["$status", "inactive"] } }, ["active", "inactive"]] },
+              { $toLower: "$status" },
+              "inactive",
+            ],
+          },
+          _role: { $toLower: { $ifNull: ["$role", ""] } },
+        },
+      },
+
+      {
+        $facet: {
+          // overall totals
+          overall: [
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                active: {
+                  $sum: { $cond: [{ $eq: ["$_status", "active"] }, 1, 0] },
+                },
+                inactive: {
+                  $sum: { $cond: [{ $eq: ["$_status", "inactive"] }, 1, 0] },
+                },
+              },
+            },
+          ],
+
+          // by status
+          byStatus: [
+            {
+              $group: {
+                _id: "$_status",
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+
+          // by role (with active/inactive split)
+          byRole: [
+            {
+              $group: {
+                _id: "$_role",
+                total: { $sum: 1 },
+                active: {
+                  $sum: { $cond: [{ $eq: ["$_status", "active"] }, 1, 0] },
+                },
+                inactive: {
+                  $sum: { $cond: [{ $eq: ["$_status", "inactive"] }, 1, 0] },
+                },
+              },
+            },
+            // hide empty role rows (if any)
+            { $match: { _id: { $ne: "" } } },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
+    ]);
+
+    const overall = result?.overall?.[0] || { total: 0, active: 0, inactive: 0 };
+    const total = overall.total || 0;
+
+    const byStatus = (result?.byStatus || []).map((s) => ({
+      status: s._id === "active" ? "active" : "inactive",
+      count: s.count,
+      pct: total ? Math.round((s.count / total) * 100) : 0,
+    }));
+
+    const byRole = (result?.byRole || []).map((r) => ({
+      role: r._id,
+      total: r.total,
+      active: r.active,
+      inactive: r.inactive,
+      pctActive: r.total ? Math.round((r.active / r.total) * 100) : 0,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      total,
+      active: overall.active || 0,
+      inactive: overall.inactive || 0,
+      byStatus,
+      byRole,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 const getUsersLists = async (req, res) => {
   try {
     // --- inputs ---
@@ -8,24 +122,68 @@ const getUsersLists = async (req, res) => {
     const limitRaw = parseInt(req.query.limit, 10);
     const page     = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
     const perReq   = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 20;
-    const perPage  = Math.min(perReq, 20); // ✅ hard cap = 20
+    const perPage  = Math.min(perReq, 20);
 
-    const sortBy   = req.query.sortBy || "_id";     // use "createdAt" if your schema has timestamps
+    const sortBy   = req.query.sortBy || "_id";
     const sortDir  = (req.query.sort || "desc").toLowerCase() === "asc" ? 1 : -1;
     const sort     = { [sortBy]: sortDir };
+    const skip     = (page - 1) * perPage;
 
-    const skip = (page - 1) * perPage;
+    // -------- build WHERE as $and clauses --------
+    const andClauses = [];
 
-    // --- query (add filters later if needed) ---
-    const where = {};
+    // q search: AND across words, OR across fields
+    const qRaw = (req.query.q || "").trim();
+    if (qRaw) {
+      const words   = qRaw.split(/\s+/).map(escapeReg).filter(Boolean);
+      const regexes = words.map((w) => new RegExp(w, "i"));
+      const fields  = ["name", "email", "phone", "department", "role", "status"];
+      regexes.forEach((r) => {
+        andClauses.push({ $or: fields.map((f) => ({ [f]: r })) });
+      });
+    }
 
+    // status filter: ?status=active&status=inactive OR status=active,inactive
+    const statusParam = req.query.status;
+    if (statusParam) {
+      const statuses = (Array.isArray(statusParam) ? statusParam : String(statusParam).split(","))
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+      if (statuses.length) {
+        // case-insensitive exact match
+        andClauses.push({ status: { $in: statuses.map(rxExactI) } });
+      }
+    }
+
+    // role filter: ?role=warehouse&role=admin OR role=warehouse,admin
+    const roleParam = req.query.role;
+    if (roleParam) {
+      const roles = (Array.isArray(roleParam) ? roleParam : String(roleParam).split(","))
+        .map((s) => normRoleToken(s))
+        .filter(Boolean);
+      if (roles.length) {
+        // DB me roles kabhi hyphen/space mixed ho sakte hain, isliye 2 patterns:
+        // - exact match on normalized with hyphen (sales-director)
+        // - OR exact match on spaced form (sales director)
+        const roleRegexes = [];
+        roles.forEach((r) => {
+          roleRegexes.push(rxExactI(r));                      // hyphen form
+          roleRegexes.push(rxExactI(r.replace(/-/g, " ")));   // spaced form
+        });
+        andClauses.push({ role: { $in: roleRegexes } });
+      }
+    }
+
+    const where = andClauses.length ? { $and: andClauses } : {};
+
+    // -------- query --------
     const [total, users] = await Promise.all([
       User.countDocuments(where),
       User.find(where)
         .sort(sort)
         .skip(skip)
         .limit(perPage)
-        .select("-password -hash -salt -__v") // 🔒 avoid sensitive fields if present
+        .select("-password -hash -salt -__v")
         .lean(),
     ]);
 
@@ -49,23 +207,22 @@ const getUsersLists = async (req, res) => {
   }
 };
 
-
 const getUsersListById = async (req, res) => {
   try {
-    const usersListById = await User.findById(req.params.id);
-    return res
-      .status(200)
-      .json({
-        success: true,
-        message: "User retrieved successfully",
-        count: usersListById.length,
-        data: usersListById,
-      });
+    const doc = await User.findById(req.params.id).select("-password -__v").lean();
+    if (!doc) return res.status(404).json({ success: false, error: "User not found" });
+    return res.status(200).json({
+      success: true,
+      message: "User retrieved successfully",
+      data: doc,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 };
 
+
+/* -------------------------- POST ----------------------- */
 const createUserList = async (req, res) => {
   try {
     const usersList = await User.create(req.body);
@@ -81,6 +238,7 @@ const createUserList = async (req, res) => {
   }
 };
 
+/* -------------------------- PUT ----------------------- */
 const updateUserList = async (req, res) => {
   try {
     const usersList = await User.findByIdAndUpdate(req.params.id, req.body);
@@ -96,6 +254,7 @@ const updateUserList = async (req, res) => {
   }
 };
 
+/* -------------------------- DELETE ----------------------- */
 const deleteUserList = async (req, res) => {
   try {
     const usersList = await User.findByIdAndDelete(req.params.id);
@@ -112,6 +271,7 @@ const deleteUserList = async (req, res) => {
 };
 
 module.exports = {
+  getUsersSummary,
   getUsersLists,
   getUsersListById,
   createUserList,

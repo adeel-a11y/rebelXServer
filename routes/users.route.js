@@ -1,9 +1,10 @@
 const express = require("express");
-const { getUsersLists, getUsersListById, createUserList, updateUserList, deleteUserList } = require("../controllers/users.controller");
+const { getUsersSummary, getUsersLists, getUsersListById, createUserList, updateUserList, deleteUserList } = require("../controllers/users.controller");
 
 const router = express.Router();
 
 // GET
+router.get("/lists/summary", getUsersSummary);
 router.get("/lists", getUsersLists);
 router.get("/lists/:id", getUsersListById);
 

@@ -191,4 +191,7 @@ const clientSchema = new mongoose.Schema(
   }
 );
 
+// models/Client.model.js define karte hue:
+clientSchema.index({ name: 1, email: 1, phone: 1, city: 1, state: 1, website: 1, ownedBy: 1, contactStatus: 1 });
+
 module.exports = mongoose.model("Client", clientSchema, "clients");

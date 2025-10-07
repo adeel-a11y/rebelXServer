@@ -31,7 +31,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, "Role is required"],
       enum: {
-        values: ["admin", "manager", "employee"],
+        values: ["admin", "manager", "employee","sales-agent", "shipping", "sales", "warehouse", "sales-executive"],
         message: "Role must be either admin, manager, or employee",
       },
     },
@@ -66,6 +66,8 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+userSchema.index({ name: 1, email: 1, phone: 1, role: 1, status: 1, department: 1 });
 
 module.exports =
   mongoose.models.User || mongoose.model("User", userSchema, "usersdb"); 
