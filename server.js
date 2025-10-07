@@ -12,7 +12,7 @@ const PORT = 3000;
 // --- CORS ---
 const allowedOrigins = [
   "http://localhost:5173", // Localhost (development)
-  "https://rebel-x-client.vercel.app/"
+  "https://rebel-x-client.vercel.app"
 ];
 
 // middleware
