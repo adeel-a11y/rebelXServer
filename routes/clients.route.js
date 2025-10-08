@@ -5,6 +5,7 @@ const {
   getClientsListById,
   createClientList,
   updateClientList,
+  updateClientStatus,
   deleteClientList,
 } = require("../controllers/clients.controller");
 
@@ -20,6 +21,7 @@ router.post("/", createClientList);
 
 // PUT
 router.put("/update/:id", updateClientList);
+router.put("/update-status/:id", updateClientStatus);
 
 // DELETE
 router.delete("/delete/:id", deleteClientList);

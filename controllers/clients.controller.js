@@ -1,6 +1,6 @@
 // controllers/clients.controller.js
 const Client = require("../models/Client.model");
-const User = require("../models/User.model")
+const User = require("../models/User.model");
 
 /* --------------------------------- helpers -------------------------------- */
 const CONTACT_STATUSES = [
@@ -23,19 +23,56 @@ const csvToArray = (v) =>
 
 // Optional US state abbreviation map (extend as you need)
 const STATE_ABBR = {
-  'ALABAMA': 'AL','ALASKA': 'AK','ARIZONA': 'AZ','ARKANSAS': 'AR',
-  'CALIFORNIA': 'CA','COLORADO': 'CO','CONNECTICUT': 'CT','DELAWARE': 'DE',
-  'FLORIDA': 'FL','GEORGIA': 'GA','HAWAII': 'HI','IDAHO': 'ID',
-  'ILLINOIS': 'IL','INDIANA': 'IN','IOWA': 'IA','KANSAS': 'KS',
-  'KENTUCKY': 'KY','LOUISIANA': 'LA','MAINE': 'ME','MARYLAND': 'MD',
-  'MASSACHUSETTS': 'MA','MICHIGAN': 'MI','MINNESOTA': 'MN','MISSISSIPPI': 'MS',
-  'MISSOURI': 'MO','MONTANA': 'MT','NEBRASKA': 'NE','NEVADA': 'NV',
-  'NEW HAMPSHIRE': 'NH','NEW JERSEY': 'NJ','NEW MEXICO': 'NM','NEW YORK': 'NY',
-  'NORTH CAROLINA': 'NC','NORTH DAKOTA': 'ND','OHIO': 'OH','OKLAHOMA': 'OK',
-  'OREGON': 'OR','PENNSYLVANIA': 'PA','RHODE ISLAND': 'RI','SOUTH CAROLINA': 'SC',
-  'SOUTH DAKOTA': 'SD','TENNESSEE': 'TN','TEXAS': 'TX','UTAH': 'UT',
-  'VERMONT': 'VT','VIRGINIA': 'VA','WASHINGTON': 'WA','WEST VIRGINIA': 'WV',
-  'WISCONSIN': 'WI','WYOMING': 'WY'
+  ALABAMA: "AL",
+  ALASKA: "AK",
+  ARIZONA: "AZ",
+  ARKANSAS: "AR",
+  CALIFORNIA: "CA",
+  COLORADO: "CO",
+  CONNECTICUT: "CT",
+  DELAWARE: "DE",
+  FLORIDA: "FL",
+  GEORGIA: "GA",
+  HAWAII: "HI",
+  IDAHO: "ID",
+  ILLINOIS: "IL",
+  INDIANA: "IN",
+  IOWA: "IA",
+  KANSAS: "KS",
+  KENTUCKY: "KY",
+  LOUISIANA: "LA",
+  MAINE: "ME",
+  MARYLAND: "MD",
+  MASSACHUSETTS: "MA",
+  MICHIGAN: "MI",
+  MINNESOTA: "MN",
+  MISSISSIPPI: "MS",
+  MISSOURI: "MO",
+  MONTANA: "MT",
+  NEBRASKA: "NE",
+  NEVADA: "NV",
+  "NEW HAMPSHIRE": "NH",
+  "NEW JERSEY": "NJ",
+  "NEW MEXICO": "NM",
+  "NEW YORK": "NY",
+  "NORTH CAROLINA": "NC",
+  "NORTH DAKOTA": "ND",
+  OHIO: "OH",
+  OKLAHOMA: "OK",
+  OREGON: "OR",
+  PENNSYLVANIA: "PA",
+  "RHODE ISLAND": "RI",
+  "SOUTH CAROLINA": "SC",
+  "SOUTH DAKOTA": "SD",
+  TENNESSEE: "TN",
+  TEXAS: "TX",
+  UTAH: "UT",
+  VERMONT: "VT",
+  VIRGINIA: "VA",
+  WASHINGTON: "WA",
+  "WEST VIRGINIA": "WV",
+  WISCONSIN: "WI",
+  WYOMING: "WY",
 };
 
 /* ----------------------------- GET: /lists/summary ------------------------ */
@@ -48,7 +85,9 @@ const getClientsSummary = async (req, res) => {
       {
         $addFields: {
           _statusRaw: { $ifNull: ["$contactStatus", ""] },
-          _statusTrim: { $trim: { input: { $ifNull: ["$contactStatus", ""] } } },
+          _statusTrim: {
+            $trim: { input: { $ifNull: ["$contactStatus", ""] } },
+          },
         },
       },
       {
@@ -63,14 +102,38 @@ const getClientsSummary = async (req, res) => {
                   in: {
                     $switch: {
                       branches: [
-                        { case: { $eq: ["$$lower", "sampling"] }, then: "Sampling" },
-                        { case: { $eq: ["$$lower", "new prospect"] }, then: "New Prospect" },
-                        { case: { $eq: ["$$lower", "uncategorized"] }, then: "Uncategorized" },
-                        { case: { $eq: ["$$lower", "closed lost"] }, then: "Closed lost" },
-                        { case: { $eq: ["$$lower", "initial contact"] }, then: "Initial Contact" },
-                        { case: { $eq: ["$$lower", "closed won"] }, then: "Closed won" },
-                        { case: { $eq: ["$$lower", "committed"] }, then: "Committed" },
-                        { case: { $eq: ["$$lower", "consideration"] }, then: "Consideration" },
+                        {
+                          case: { $eq: ["$$lower", "sampling"] },
+                          then: "Sampling",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "new prospect"] },
+                          then: "New Prospect",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "uncategorized"] },
+                          then: "Uncategorized",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "closed lost"] },
+                          then: "Closed lost",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "initial contact"] },
+                          then: "Initial Contact",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "closed won"] },
+                          then: "Closed won",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "committed"] },
+                          then: "Committed",
+                        },
+                        {
+                          case: { $eq: ["$$lower", "consideration"] },
+                          then: "Consideration",
+                        },
                       ],
                       default: "Other",
                     },
@@ -137,8 +200,14 @@ const getClientsLists = async (req, res) => {
       const words = qRaw.split(/\s+/).map(escapeReg).filter(Boolean);
       const regexes = words.map((w) => new RegExp(w, "i"));
       const searchFields = [
-        "name", "email", "phone", "city", "state",
-        "website", "ownedBy", "contactStatus",
+        "name",
+        "email",
+        "phone",
+        "city",
+        "state",
+        "website",
+        "ownedBy",
+        "contactStatus",
       ];
       and.push(
         ...regexes.map((r) => ({ $or: searchFields.map((f) => ({ [f]: r })) }))
@@ -147,7 +216,7 @@ const getClientsLists = async (req, res) => {
 
     // ---- filters ----
     const statusesArr = csvToArray(req.query.statuses);
-    const statesArr   = csvToArray(req.query.states);
+    const statesArr = csvToArray(req.query.states);
 
     if (statusesArr.length) {
       const statusRegexes = [];
@@ -193,30 +262,30 @@ const getClientsLists = async (req, res) => {
         // join users by email (ownedBy holds email string)
         {
           $lookup: {
-            from: "users",                // << change if your collection name differs
+            from: "users", // << change if your collection name differs
             let: { ownedEmail: "$ownedBy" },
             pipeline: [
               { $match: { $expr: { $eq: ["$email", "$$ownedEmail"] } } },
-              { $project: { _id: 0, name: 1, email: 1 } }
+              { $project: { _id: 0, name: 1, email: 1 } },
             ],
-            as: "ownerDoc"
-          }
+            as: "ownerDoc",
+          },
         },
 
         // Add 'ownerName' (fallback = original email or empty)
         {
           $addFields: {
             ownerName: {
-              $ifNull: [{ $first: "$ownerDoc.name" }, "$ownedBy"]
-            }
-          }
+              $ifNull: [{ $first: "$ownerDoc.name" }, "$ownedBy"],
+            },
+          },
         },
 
         // optional: hide the joined array; keep ownedBy for back-compat
-        { $project: { ownerDoc: 0 } }
+        { $project: { ownerDoc: 0 } },
         // If you want to completely replace ownedBy with name:
         // { $project: { ownerDoc: 0, ownedBy: 0 } }
-      ])
+      ]),
     ]);
 
     const totalPages = Math.max(Math.ceil(total / perPage), 1);
@@ -232,7 +301,7 @@ const getClientsLists = async (req, res) => {
       hasNext: page < totalPages,
       prevPage: page > 1 ? page - 1 : null,
       nextPage: page < totalPages ? page + 1 : null,
-      data: clients,                 // now includes ownerName
+      data: clients, // now includes ownerName
       meta: { total, page, perPage },
     });
   } catch (error) {
@@ -253,7 +322,11 @@ const getClientsListById = async (req, res) => {
 const createClientList = async (req, res) => {
   try {
     const clientsList = await Client.create(req.body);
-    return res.status(201).json(clientsList);
+    return res.status(201).json({
+      data: clientsList,
+      message: "Successfully Added New Client",
+      success: true,
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -267,6 +340,26 @@ const updateClientList = async (req, res) => {
       { new: true }
     );
     return res.status(200).json(clientsList);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+const updateClientStatus = async (req, res) => {
+  try {
+    const { contactStatus } = req.body;
+    const clientsList = await Client.findByIdAndUpdate(
+      req.params.id,
+      { contactStatus },
+      { new: true }
+    );
+    return res
+      .status(200)
+      .json({
+        data: clientsList,
+        success: true,
+        message: "Successfuly Update Status",
+      });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -287,5 +380,6 @@ module.exports = {
   getClientsListById,
   createClientList,
   updateClientList,
+  updateClientStatus,
   deleteClientList,
 };

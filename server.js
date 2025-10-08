@@ -30,10 +30,6 @@ app.use(
   })
 );
 
-// (Optional) avoid 304-caching weirdness during dev
-// app.set("etag", false);
-// app.use((req,res,next)=>{ res.set("Cache-Control","no-store"); next(); });
-
 // Body parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
