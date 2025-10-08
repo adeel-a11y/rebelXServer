@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getClientsLists,
+  getClientsNames,
   getClientsSummary,
   getClientsListById,
   createClientList,
@@ -13,6 +14,7 @@ const router = express.Router();
 
 // GET
 router.get("/lists", getClientsLists);
+router.get("/lists/names", getClientsNames);
 router.get("/lists/summary", getClientsSummary);
 router.get("/lists/:id", getClientsListById);
 

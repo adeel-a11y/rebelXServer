@@ -176,6 +176,18 @@ const getClientsSummary = async (req, res) => {
    - states:   CSV (exact, trim-tolerant, token match; optional abbrev)
    - page, limit, sortBy, sort
 ------------------------------------------------------------------------------*/
+const getClientsNames = async (req, res) => {
+  try {
+    const clients = await Client.find({});
+    const names = clients.map((c) => c.name);
+    return res
+      .status(200)
+      .json({ success: true, length: names.length, data: names });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 const getClientsLists = async (req, res) => {
   try {
     // paging + sorting
@@ -353,13 +365,11 @@ const updateClientStatus = async (req, res) => {
       { contactStatus },
       { new: true }
     );
-    return res
-      .status(200)
-      .json({
-        data: clientsList,
-        success: true,
-        message: "Successfuly Update Status",
-      });
+    return res.status(200).json({
+      data: clientsList,
+      success: true,
+      message: "Successfuly Update Status",
+    });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -376,6 +386,7 @@ const deleteClientList = async (req, res) => {
 
 module.exports = {
   getClientsLists,
+  getClientsNames,
   getClientsSummary,
   getClientsListById,
   createClientList,

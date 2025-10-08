@@ -207,6 +207,16 @@ const getUsersLists = async (req, res) => {
   }
 };
 
+const getUserNames = async (req, res) => {
+  try {
+    const users = await User.find({});
+    const names = users.map((c) => c.name);
+    return res.status(200).json({ success: true, length: names.length, data: names });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 const getUsersListById = async (req, res) => {
   try {
     const doc = await User.findById(req.params.id).select("-password -__v").lean();
@@ -220,7 +230,6 @@ const getUsersListById = async (req, res) => {
     return res.status(500).json({ success: false, error: error.message });
   }
 };
-
 
 /* -------------------------- POST ----------------------- */
 const createUserList = async (req, res) => {
@@ -272,6 +281,7 @@ const deleteUserList = async (req, res) => {
 
 module.exports = {
   getUsersSummary,
+  getUserNames,
   getUsersLists,
   getUsersListById,
   createUserList,
