@@ -52,35 +52,14 @@ app.use("/api/activities", activityRoutes);
 app.use("/api/clients", clientRoutes);
 
 
-if (require.main === module && !process.env.VERCEL) {
-  const server = http.createServer(app);
-
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server is running on port ${PORT}`);
-
-    // Prefer env, else derive from Render's external URL, else localhost:
-    const baseFromRender =
-      (process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
-    const PING_URL =
-      process.env.PING_URL ||
-      (baseFromRender ? `${baseFromRender}/api/ping` : `http://localhost:${PORT}/api/ping`);
-
-    // 10 minutes (override via KEEPALIVE_INTERVAL_MS if you want)
-    const intervalMs = Number(process.env.KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
-
-    console.log(`[AutoPing] Using ${PING_URL} every ${intervalMs / 60000} min`);
-
+app.listen(PORT, '0.0.0.0', () => {
+    const axios = require('axios');
     setInterval(async () => {
-      try {
-        await axios.get(PING_URL, { timeout: 10_000 });
-        console.log(`[AutoPing] ok @ ${new Date().toISOString()}`);
-      } catch (err) {
-        console.error(`[AutoPing] failed: ${err?.message || err}`);
-      }
-    }, intervalMs);
-  });
-}
-
-// app.listen(PORT, () => {
-//   console.log(`Server is running on port ${PORT}`);
-// });
+        try {
+            await axios.get('https://rebelxserver.onrender.com/api/ping');
+            console.log(`[AutoPing] Successful at ${new Date().toISOString()}`);
+        } catch (err) {
+            console.error('[AutoPing] Failed:', err.message);
+        }
+    }, 10 * 60 * 1000);
+});
