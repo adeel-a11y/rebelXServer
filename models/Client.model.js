@@ -37,6 +37,7 @@ const clientSchema = new mongoose.Schema(
           "Closed won",
           "Committed",
           "Consideration",
+          "Other",
         ],
         message: "Invalid contact status",
       },
@@ -45,11 +46,48 @@ const clientSchema = new mongoose.Schema(
     contactType: {
       type: String,
       trim: true,
+      enum: [
+        "Smoke Shop",
+        "Vape Store",
+        "Shop",
+        "Distro",
+        "Master Distro",
+        "Broker/Jobber",
+        "Manufacturer",
+        "Dispensary",
+        "Kratom Dispensary",
+        "Kratom Dispensary/Distributor",
+        "CBD Dispensary",
+        "Kava/Kratom Bar",
+        "Kava Bar",
+        "Health Food Store",
+        "Tobacco Shop",
+        "Liquor store",
+        "Online Retailer",
+        "Franchise",
+        "Spa",
+        "Individual",
+        "Beer and Wine Bar",
+        "Market",
+        "Amherst Client",
+        "Sully's Client",
+        "Whole Saler",
+        "Gas station",
+        "Vape Empire",
+        "Other",
+      ],
       maxlength: [50, "Contact type cannot exceed 50 characters"],
     },
     companyType: {
       type: String,
       trim: true,
+      enum: [
+        "Potential Customer",
+        "Current Customer",
+        "Inactive Customer",
+        "Uncategorized",
+        "Other",
+      ],
       maxlength: [100, "Company type cannot exceed 100 characters"],
     },
 
@@ -174,11 +212,34 @@ const clientSchema = new mongoose.Schema(
     defaultShippingTerms: {
       type: String,
       trim: true,
+      enum: [
+        "UPS Ground",
+        "UPS 2nd Day Air",
+        "UPS 3 Day Select",
+        "UPS Next Day Air Saver",
+        "USPS Ground Advantage",
+        "Will Call",
+        "Local Delivery",
+        "Freight Via SAIA",
+        "Other",
+      ],
       maxlength: [200, "Shipping terms cannot exceed 200 characters"],
     },
     defaultPaymentMethod: {
       type: String,
       trim: true,
+      enum: [
+        "Credit Card",
+        "CC#",
+        "Auth Payment Link",
+        "Mobile Check Deposit",
+        "ACH",
+        "Cash",
+        "Nothing Due",
+        "Check By Mail",
+        "Net Terms",
+        "Other",
+      ],
       maxlength: [100, "Payment method cannot exceed 100 characters"],
     },
     createdAt: {
@@ -192,6 +253,15 @@ const clientSchema = new mongoose.Schema(
 );
 
 // models/Client.model.js define karte hue:
-clientSchema.index({ name: 1, email: 1, phone: 1, city: 1, state: 1, website: 1, ownedBy: 1, contactStatus: 1 });
+clientSchema.index({
+  name: 1,
+  email: 1,
+  phone: 1,
+  city: 1,
+  state: 1,
+  website: 1,
+  ownedBy: 1,
+  contactStatus: 1,
+});
 
 module.exports = mongoose.model("Client", clientSchema, "clients");
