@@ -298,24 +298,31 @@ const getActivitiesSummary = async (req, res) => {
     }
 
     // ---- build date range (preset or from/to) ----
-    let dateFrom = null, dateTo = null;
+    let dateFrom = null,
+      dateTo = null;
     const preset = req.query.dateRange;
     if (preset === "today") {
-      dateFrom = startOfToday(); dateTo = endOfToday();
+      dateFrom = startOfToday();
+      dateTo = endOfToday();
     } else if (preset === "this_month") {
-      dateFrom = startOfMonth(); dateTo = endOfMonth();
+      dateFrom = startOfMonth();
+      dateTo = endOfMonth();
     } else if (preset === "this_year") {
       const y = new Date().getFullYear();
-      dateFrom = startOfYear(y); dateTo = endOfYear(y);
+      dateFrom = startOfYear(y);
+      dateTo = endOfYear(y);
     } else if (preset === "prev_year") {
       const y = new Date().getFullYear() - 1;
-      dateFrom = startOfYear(y); dateTo = endOfYear(y);
+      dateFrom = startOfYear(y);
+      dateTo = endOfYear(y);
     }
     if (req.query.from) {
-      const f = new Date(req.query.from); if (!isNaN(f)) dateFrom = f;
+      const f = new Date(req.query.from);
+      if (!isNaN(f)) dateFrom = f;
     }
     if (req.query.to) {
-      const t = new Date(req.query.to); if (!isNaN(t)) dateTo = t;
+      const t = new Date(req.query.to);
+      if (!isNaN(t)) dateTo = t;
     }
     const hasDate = Boolean(dateFrom || dateTo);
 
@@ -324,15 +331,30 @@ const getActivitiesSummary = async (req, res) => {
       { $match: match },
 
       // If date filter present, convert possibly-string createdAt => date and filter
-      ...(hasDate ? [
-        { $addFields: { _createdAtDate: { $convert: { input: "$createdAt", to: "date", onError: null, onNull: null } } } },
-        { $match: {
-            _createdAtDate: {
-              ...(dateFrom ? { $gte: dateFrom } : {}),
-              ...(dateTo   ? { $lte: dateTo   } : {}),
-            }
-        } },
-      ] : []),
+      ...(hasDate
+        ? [
+            {
+              $addFields: {
+                _createdAtDate: {
+                  $convert: {
+                    input: "$createdAt",
+                    to: "date",
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+              },
+            },
+            {
+              $match: {
+                _createdAtDate: {
+                  ...(dateFrom ? { $gte: dateFrom } : {}),
+                  ...(dateTo ? { $lte: dateTo } : {}),
+                },
+              },
+            },
+          ]
+        : []),
 
       // Normalize type once
       { $addFields: { _lt: { $toLower: { $ifNull: ["$type", ""] } } } },
@@ -346,19 +368,17 @@ const getActivitiesSummary = async (req, res) => {
             $sum: {
               $cond: [
                 { $in: ["$_lt", ["call", "call_made", "phone", "phone_call"]] },
-                1, 0
-              ]
-            }
+                1,
+                0,
+              ],
+            },
           },
           totalEmails: {
             $sum: {
-              $cond: [
-                { $in: ["$_lt", ["email", "email_sent"]] },
-                1, 0
-              ]
-            }
+              $cond: [{ $in: ["$_lt", ["email", "email_sent"]] }, 1, 0],
+            },
           },
-        }
+        },
       },
       { $project: { _id: 0 } },
     ];
@@ -396,9 +416,14 @@ const createActivityList = async (req, res) => {
 
 const updateActivityList = async (req, res) => {
   try {
-    const updated = await Activity.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
+    console.log(req.body);
+    const updated = await Activity.findByIdAndUpdate(
+      { _id: req.params.id },
+      req.body,
+      {
+        new: true,
+      }
+    );
     if (!updated)
       return res.status(404).json({ success: false, message: "Not found" });
     return res.status(200).json({ success: true, data: updated });
