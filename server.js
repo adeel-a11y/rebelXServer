@@ -1,7 +1,6 @@
 // server.js / index.js
 const express = require("express");
 const app = express();
-const http = require("http");
 const axios = require("axios");
 require("dotenv").config();
 const cors = require("cors");
@@ -53,7 +52,6 @@ app.use("/api/clients", clientRoutes);
 
 
 app.listen(PORT, '0.0.0.0', () => {
-    const axios = require('axios');
     setInterval(async () => {
         try {
             await axios.get('https://rebelxserver.onrender.com/api/ping');
