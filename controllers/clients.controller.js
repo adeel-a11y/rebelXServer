@@ -1,6 +1,7 @@
 // controllers/clients.controller.js
 const Client = require("../models/Client.model");
 const User = require("../models/User.model");
+const Activity = require("../models/Activity.model");
 
 /* --------------------------------- helpers -------------------------------- */
 const CONTACT_STATUSES = [
@@ -169,13 +170,8 @@ const getClientsSummary = async (req, res) => {
   }
 };
 
-/* ------------------------------ GET: /lists --------------------------------
-   Supports:
-   - q: space-separated search across fields (AND of ORs)
-   - statuses: CSV (token/word OR exact match; case-insensitive)
-   - states:   CSV (exact, trim-tolerant, token match; optional abbrev)
-   - page, limit, sortBy, sort
-------------------------------------------------------------------------------*/
+/* --------------------------------- GET -------------------------------------- */
+
 const getClientsNames = async (req, res) => {
   try {
     const clients = await Client.find({});
@@ -321,7 +317,6 @@ const getClientsLists = async (req, res) => {
   }
 };
 
-/* ------------------------------- CRUD -------------------------------------- */
 const getClientsListById = async (req, res) => {
   try {
     const clientsListById = await Client.findById(req.params.id);
@@ -330,6 +325,146 @@ const getClientsListById = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+const getActivitiesByClient = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const escapeRegex = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // pagination params
+    const pageRaw  = parseInt(req.query.page, 10);
+    const limitRaw = parseInt(req.query.limit, 10);
+    const page     = Number.isFinite(pageRaw)  && pageRaw  > 0 ? pageRaw  : 1;
+    const limitReq = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
+    const perPage  = Math.min(limitReq, 100);
+    const skip     = (page - 1) * perPage;
+
+    // search param
+    const q = (req.query.q || "").trim();
+    const rx = q ? new RegExp(escapeRegex(q), "i") : null;
+
+    // 1) find the client
+    const client = await Client.findById(id).lean();
+    if (!client) {
+      return res.status(404).json({ success: false, error: "Client not found" });
+    }
+
+    // 2) base match
+    const match = { clientId: client.externalId };
+
+    // 3) optional search filter across common fields
+    const searchMatch = rx
+      ? { $or: [{ type: rx }, { description: rx }, { trackingId: rx }, { userId: rx }] }
+      : {};
+
+    // 4) aggregate: counts + page + lookup
+    const [agg] = await Activity.aggregate([
+      { $match: { ...match, ...searchMatch } },
+
+      // normalize type for robust counting
+      { $addFields: { _normType: { $toLower: { $ifNull: ["$type", "other"] } } } },
+
+      // sort newest first (adjust if createdAt is string → convert to date first)
+      { $sort: { createdAt: -1, _id: -1 } },
+
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+
+          countsByType: [
+            { $group: { _id: "$_normType", count: { $sum: 1 } } },
+            { $project: { _id: 0, type: "$_id", count: 1 } },
+          ],
+
+          data: [
+            { $skip: skip },
+            { $limit: perPage },
+
+            // join users by email (userId stores email)
+            {
+              $lookup: {
+                from: "usersdb",
+                let: { email: "$userId" },
+                pipeline: [
+                  { $match: { $expr: { $eq: ["$email", "$$email"] } } },
+                  { $project: { _id: 0, name: 1, email: 1 } },
+                ],
+                as: "userDoc",
+              },
+            },
+            {
+              $addFields: {
+                userId: { $ifNull: [{ $first: "$userDoc.name" }, "$userId"] },
+              },
+            },
+            { $project: { userDoc: 0 } },
+          ],
+        },
+      },
+
+      {
+        $addFields: {
+          total: { $ifNull: [{ $arrayElemAt: ["$total.count", 0] }, 0] },
+
+          emailCount: {
+            $let: {
+              vars: {
+                e: { $first: { $filter: { input: "$countsByType", as: "it", cond: { $eq: ["$$it.type", "email"] } } } },
+              },
+              in: { $ifNull: ["$$e.count", 0] },
+            },
+          },
+
+          callCount: {
+            $let: {
+              vars: {
+                c: { $first: { $filter: { input: "$countsByType", as: "it", cond: { $eq: ["$$it.type", "call"] } } } },
+              },
+              in: { $ifNull: ["$$c.count", 0] },
+            },
+          },
+        },
+      },
+    ]);
+
+    const total      = agg?.total || 0;
+    const data       = agg?.data || [];
+    const totalPages = Math.max(Math.ceil(total / perPage), 1);
+    const emailCount = agg?.emailCount || 0;
+    const callCount  = agg?.callCount || 0;
+
+    return res.status(200).json({
+      success: true,
+      message: "Activities retrieved successfully",
+      page,
+      perPage,
+      total,
+      totalPages,
+      hasPrev: page > 1,
+      hasNext: page < totalPages,
+      prevPage: page > 1 ? page - 1 : null,
+      nextPage: page < totalPages ? page + 1 : null,
+
+      counts: {
+        total,
+        emails: emailCount,
+        calls: callCount,
+        others: Math.max(total - emailCount - callCount, 0),
+      },
+
+      data,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve activities",
+      error: error.message,
+    });
+  }
+};
+
+/* ------------------------------- CREATE -------------------------------------- */
 
 const createClientList = async (req, res) => {
   try {
@@ -343,6 +478,8 @@ const createClientList = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+/* ------------------------------- UPDATE -------------------------------------- */
 
 const updateClientList = async (req, res) => {
   try {
@@ -375,6 +512,8 @@ const updateClientStatus = async (req, res) => {
   }
 };
 
+/* ------------------------------- DELETE -------------------------------------- */
+
 const deleteClientList = async (req, res) => {
   try {
     const clientsList = await Client.findByIdAndDelete(req.params.id);
@@ -389,6 +528,7 @@ module.exports = {
   getClientsNames,
   getClientsSummary,
   getClientsListById,
+  getActivitiesByClient,
   createClientList,
   updateClientList,
   updateClientStatus,

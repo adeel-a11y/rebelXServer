@@ -4,6 +4,7 @@ const {
   getClientsNames,
   getClientsSummary,
   getClientsListById,
+  getActivitiesByClient,
   createClientList,
   updateClientList,
   updateClientStatus,
@@ -16,6 +17,7 @@ const router = express.Router();
 router.get("/lists", getClientsLists);
 router.get("/lists/names", getClientsNames);
 router.get("/lists/summary", getClientsSummary);
+router.get("/lists/activities/:id", getActivitiesByClient);
 router.get("/lists/:id", getClientsListById);
 
 // POST
