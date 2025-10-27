@@ -42,6 +42,7 @@ dbConnection();
 const userRoutes = require("./routes/users.route");
 const activityRoutes = require("./routes/activities.route");
 const clientRoutes = require("./routes/clients.route");
+const overviewRoutes = require("./routes/overview.route");
 
 app.get("/", (_req, res) => {
   res.status(200).json({ message: "Welcome Back ReblEx Server" });
@@ -49,7 +50,7 @@ app.get("/", (_req, res) => {
 app.use("/api/users", userRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/clients", clientRoutes);
-
+app.use("/api/overview", overviewRoutes);
 
 app.listen(PORT, '0.0.0.0', () => {
     setInterval(async () => {
