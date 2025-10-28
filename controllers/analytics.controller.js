@@ -170,6 +170,227 @@ const overviewAnalytics = async (req, res) => {
   }
 };
 
+const monthlyNewClients = async (req, res) => {
+  try {
+    // ----- 1. Calculate date window (last 12 months including current month) -----
+    const now = new Date();
+
+    // first day of current month @ 00:00
+    const thisMonthStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+      0, 0, 0, 0
+    );
+
+    // first day of next month @ 00:00
+    const nextMonthStart = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      1,
+      0, 0, 0, 0
+    );
+
+    // 11 months back from start of this month -> gives us 12 months total
+    const startDate = new Date(
+      thisMonthStart.getFullYear(),
+      thisMonthStart.getMonth() - 11,
+      1,
+      0, 0, 0, 0
+    );
+
+    const endDate = nextMonthStart;
+
+    // ----- 2. Aggregation -----
+    const aggResult = await Client.aggregate([
+      //
+      // STEP A: Add a real Date field `createdAtDate` from your string "M/D/YYYY"
+      //
+      {
+        $addFields: {
+          createdAtDate: {
+            $let: {
+              vars: {
+                parts: { $split: ["$createdAt", "/"] },
+                // parts[0] = month ("9")
+                // parts[1] = day   ("9")
+                // parts[2] = year  ("2020")
+              },
+              in: {
+                $dateFromParts: {
+                  year: { $toInt: { $arrayElemAt: ["$$parts", 2] } },
+                  month: { $toInt: { $arrayElemAt: ["$$parts", 0] } },
+                  day: { $toInt: { $arrayElemAt: ["$$parts", 1] } },
+                  hour: 0,
+                  minute: 0,
+                  second: 0,
+                  millisecond: 0,
+                },
+              },
+            },
+          },
+        },
+      },
+
+      //
+      // STEP B: only keep docs in our last-12-months window
+      //
+      {
+        $match: {
+          createdAtDate: { $gte: startDate, $lt: endDate },
+        },
+      },
+
+      //
+      // STEP C: group by year+month of that parsed date
+      //
+      {
+        $group: {
+          _id: {
+            year: { $year: "$createdAtDate" },
+            month: { $month: "$createdAtDate" },
+          },
+          count: { $sum: 1 },
+        },
+      },
+
+      //
+      // STEP D: shape the output nicely
+      //
+      {
+        $project: {
+          _id: 0,
+          year: "$_id.year",
+          month: "$_id.month",
+          count: 1,
+        },
+      },
+      {
+        $sort: { year: 1, month: 1 },
+      },
+    ]);
+
+    // ----- 3. Build lookup map: { "2025-10": 42, ... }
+    const countMap = {};
+    for (const row of aggResult) {
+      const key = `${row.year}-${String(row.month).padStart(2, "0")}`;
+      countMap[key] = row.count;
+    }
+
+    // ----- 4. Generate last 12 months in order and fill missing with 0 -----
+    const finalData = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(
+        thisMonthStart.getFullYear(),
+        thisMonthStart.getMonth() - i,
+        1,
+        0, 0, 0, 0
+      );
+
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0"); // +1 because getMonth() is 0-based
+      const key = `${y}-${m}`;
+
+      finalData.push({
+        month: key,             // "2025-10"
+        newClients: countMap[key] ?? 0, // fill 0 if no data
+      });
+    }
+
+    // ----- 5. Send response -----
+    return res.status(200).json({
+      success: true,
+      message: "Monthly new clients (last 12 months)",
+      data: finalData,
+      meta: {
+        rangeStart: startDate,
+        rangeEndExclusive: endDate,
+        buckets: finalData.length,
+      },
+    });
+  } catch (err) {
+    console.error("Error in monthlyNewClients:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch monthly new clients",
+      error: err.message,
+    });
+  }
+};
+
+const getTopUsersByActivity = async (req, res) => {
+  try {
+    const pipeline = [
+      // 1) group all activities by userId (email in DB)
+      {
+        $group: {
+          _id: "$userId", // this is the user's email in the raw Activity docs
+          activityCount: { $sum: 1 },
+          lastActivityAt: { $max: "$createdAt" }, // Date
+        },
+      },
+
+      // 2) join with usersdb to get the user's profile info
+      {
+        $lookup: {
+          from: "usersdb",           // <-- collection name from your User model
+          localField: "_id",         // userId from Activity (email)
+          foreignField: "email",     // email from User
+          as: "userInfo",
+        },
+      },
+
+      // 3) add friendly fields
+      {
+        $addFields: {
+          // extract first (and only) match from lookup
+          name: {
+            $ifNull: [{ $arrayElemAt: ["$userInfo.name", 0] }, "$_id"],
+          },
+          role: { $arrayElemAt: ["$userInfo.role", 0] },
+          status: { $arrayElemAt: ["$userInfo.status", 0] },
+        },
+      },
+
+      // 4) final shape of each row
+      {
+        $project: {
+          _id: 0,
+          email: "$_id",
+          name: 1,
+          role: 1,
+          status: 1,
+          activityCount: 1,
+          lastActivityAt: 1,
+        },
+      },
+
+      // 5) sort by most active first (and break ties by recency)
+      { $sort: { activityCount: -1, lastActivityAt: -1 } },
+
+      // 6) only top 5
+      { $limit: 5 },
+    ];
+
+    const results = await Activity.aggregate(pipeline);
+
+    return res.status(200).json({
+      success: true,
+      message: "Top active users fetched successfully",
+      data: results,
+    });
+  } catch (error) {
+    console.error("Error in getTopUsersByActivity:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch top active users",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   overviewAnalytics,
+  monthlyNewClients,
+  getTopUsersByActivity,
 };
