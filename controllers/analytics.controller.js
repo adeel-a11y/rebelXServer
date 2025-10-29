@@ -6,7 +6,15 @@ const overviewAnalytics = async (req, res) => {
   try {
     // ===== 1. Date range for CURRENT month =====
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0); // ex: 2025-10-01T00:00:00
+    const monthStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0
+    ); // ex: 2025-10-01T00:00:00
     const nextMonthStart = new Date(
       now.getFullYear(),
       now.getMonth() + 1,
@@ -31,11 +39,7 @@ const overviewAnalytics = async (req, res) => {
           activeUsers: {
             $sum: {
               // case-insensitive check for "active"
-              $cond: [
-                { $eq: [{ $toLower: "$status" }, "active"] },
-                1,
-                0,
-              ],
+              $cond: [{ $eq: [{ $toLower: "$status" }, "active"] }, 1, 0],
             },
           },
         },
@@ -72,11 +76,7 @@ const overviewAnalytics = async (req, res) => {
           monthlyUsers: { $sum: 1 },
           monthlyActiveUsers: {
             $sum: {
-              $cond: [
-                { $eq: [{ $toLower: "$status" }, "active"] },
-                1,
-                0,
-              ],
+              $cond: [{ $eq: [{ $toLower: "$status" }, "active"] }, 1, 0],
             },
           },
         },
@@ -124,21 +124,16 @@ const overviewAnalytics = async (req, res) => {
     ]);
 
     // each aggregate returns [] if no docs, so fallback to zeros
-    const userTotals =
-      userTotalsAgg[0] || { totalUsers: 0, activeUsers: 0 };
+    const userTotals = userTotalsAgg[0] || { totalUsers: 0, activeUsers: 0 };
     const clientTotals = clientTotalsAgg[0] || { totalClients: 0 };
-    const activityTotals =
-      activityTotalsAgg[0] || { totalActivities: 0 };
+    const activityTotals = activityTotalsAgg[0] || { totalActivities: 0 };
 
-    const userMonthly =
-      userMonthlyAgg[0] || {
-        monthlyUsers: 0,
-        monthlyActiveUsers: 0,
-      };
-    const clientMonthly =
-      clientMonthlyAgg[0] || { monthlyClients: 0 };
-    const activityMonthly =
-      activityMonthlyAgg[0] || { monthlyActivities: 0 };
+    const userMonthly = userMonthlyAgg[0] || {
+      monthlyUsers: 0,
+      monthlyActiveUsers: 0,
+    };
+    const clientMonthly = clientMonthlyAgg[0] || { monthlyClients: 0 };
+    const activityMonthly = activityMonthlyAgg[0] || { monthlyActivities: 0 };
 
     // ===== 5. Send combined response =====
     return res.status(200).json({
@@ -180,7 +175,10 @@ const monthlyNewClients = async (req, res) => {
       now.getFullYear(),
       now.getMonth(),
       1,
-      0, 0, 0, 0
+      0,
+      0,
+      0,
+      0
     );
 
     // first day of next month @ 00:00
@@ -188,7 +186,10 @@ const monthlyNewClients = async (req, res) => {
       now.getFullYear(),
       now.getMonth() + 1,
       1,
-      0, 0, 0, 0
+      0,
+      0,
+      0,
+      0
     );
 
     // 11 months back from start of this month -> gives us 12 months total
@@ -196,7 +197,10 @@ const monthlyNewClients = async (req, res) => {
       thisMonthStart.getFullYear(),
       thisMonthStart.getMonth() - 11,
       1,
-      0, 0, 0, 0
+      0,
+      0,
+      0,
+      0
     );
 
     const endDate = nextMonthStart;
@@ -209,25 +213,36 @@ const monthlyNewClients = async (req, res) => {
       {
         $addFields: {
           createdAtDate: {
-            $let: {
-              vars: {
-                parts: { $split: ["$createdAt", "/"] },
-                // parts[0] = month ("9")
-                // parts[1] = day   ("9")
-                // parts[2] = year  ("2020")
-              },
-              in: {
-                $dateFromParts: {
-                  year: { $toInt: { $arrayElemAt: ["$$parts", 2] } },
-                  month: { $toInt: { $arrayElemAt: ["$$parts", 0] } },
-                  day: { $toInt: { $arrayElemAt: ["$$parts", 1] } },
-                  hour: 0,
-                  minute: 0,
-                  second: 0,
-                  millisecond: 0,
+            $cond: [
+              // if createdAt is already a BSON Date
+              { $eq: [{ $type: "$createdAt" }, "date"] },
+
+              // THEN: just use it directly
+              "$createdAt",
+
+              // ELSE: assume it's a string like "9/9/2020" and parse it
+              {
+                $let: {
+                  vars: {
+                    parts: { $split: ["$createdAt", "/"] },
+                    // parts[0] = month
+                    // parts[1] = day
+                    // parts[2] = year
+                  },
+                  in: {
+                    $dateFromParts: {
+                      year: { $toInt: { $arrayElemAt: ["$$parts", 2] } },
+                      month: { $toInt: { $arrayElemAt: ["$$parts", 0] } },
+                      day: { $toInt: { $arrayElemAt: ["$$parts", 1] } },
+                      hour: 0,
+                      minute: 0,
+                      second: 0,
+                      millisecond: 0,
+                    },
+                  },
                 },
               },
-            },
+            ],
           },
         },
       },
@@ -284,7 +299,10 @@ const monthlyNewClients = async (req, res) => {
         thisMonthStart.getFullYear(),
         thisMonthStart.getMonth() - i,
         1,
-        0, 0, 0, 0
+        0,
+        0,
+        0,
+        0
       );
 
       const y = d.getFullYear();
@@ -292,7 +310,7 @@ const monthlyNewClients = async (req, res) => {
       const key = `${y}-${m}`;
 
       finalData.push({
-        month: key,             // "2025-10"
+        month: key, // "2025-10"
         newClients: countMap[key] ?? 0, // fill 0 if no data
       });
     }
@@ -333,9 +351,9 @@ const getTopUsersByActivity = async (req, res) => {
       // 2) join with usersdb to get the user's profile info
       {
         $lookup: {
-          from: "usersdb",           // <-- collection name from your User model
-          localField: "_id",         // userId from Activity (email)
-          foreignField: "email",     // email from User
+          from: "usersdb", // <-- collection name from your User model
+          localField: "_id", // userId from Activity (email)
+          foreignField: "email", // email from User
           as: "userInfo",
         },
       },
