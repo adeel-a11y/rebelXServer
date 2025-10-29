@@ -407,8 +407,167 @@ const getTopUsersByActivity = async (req, res) => {
   }
 };
 
+const contactStatusBreakdown = async (req, res) => {
+  try {
+    const pipeline = [
+      // only include docs where contactStatus actually exists and isn't empty
+      {
+        $match: {
+          contactStatus: { $exists: true, $ne: null, $ne: "" },
+        },
+      },
+
+      // group by contactStatus
+      {
+        $group: {
+          _id: "$contactStatus",
+          value: { $sum: 1 },
+        },
+      },
+
+      // sort most common first
+      {
+        $sort: { value: -1 },
+      },
+
+      // reshape for clean response
+      {
+        $project: {
+          _id: 0,
+          name: "$_id",
+          value: 1,
+        },
+      },
+    ];
+
+    const breakdown = await Client.aggregate(pipeline);
+
+    // also get total clients (you can also just do Client.countDocuments() if you want ALL docs)
+    const totalClients = await Client.countDocuments();
+
+    return res.status(200).json({
+      success: true,
+      message: "Clients grouped by contactStatus",
+      data: breakdown,
+      meta: {
+        totalClients,
+        groups: breakdown.length,
+      },
+    });
+  } catch (err) {
+    console.error("Error in contactStatusBreakdown:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch contact status breakdown",
+      error: err.message,
+    });
+  }
+};
+
+const companyTypeBreakdown = async (req, res) => {
+  try {
+    const pipeline = [
+      {
+        $match: {
+          companyType: { $exists: true, $ne: null, $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: "$companyType",
+          value: { $sum: 1 },
+        },
+      },
+      {
+        $sort: { value: -1 },
+      },
+      {
+        $project: {
+          _id: 0,
+          name: "$_id",
+          value: 1,
+        },
+      },
+    ];
+
+    const breakdown = await Client.aggregate(pipeline);
+
+    const totalClients = await Client.countDocuments();
+
+    return res.status(200).json({
+      success: true,
+      message: "Clients grouped by companyType",
+      data: breakdown,
+      meta: {
+        totalClients,
+        groups: breakdown.length,
+      },
+    });
+  } catch (err) {
+    console.error("Error in companyTypeBreakdown:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch company type breakdown",
+      error: err.message,
+    });
+  }
+};
+
+const contactTypeBreakdown = async (req, res) => {
+  try {
+    const pipeline = [
+      {
+        $match: {
+          contactType: { $exists: true, $ne: null, $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: "$contactType",
+          value: { $sum: 1 },
+        },
+      },
+      {
+        $sort: { value: -1 },
+      },
+      {
+        $project: {
+          _id: 0,
+          name: "$_id",
+          value: 1,
+        },
+      },
+    ];
+
+    const breakdown = await Client.aggregate(pipeline);
+
+    const totalClients = await Client.countDocuments();
+
+    return res.status(200).json({
+      success: true,
+      message: "Clients grouped by contactType",
+      data: breakdown,
+      meta: {
+        totalClients,
+        groups: breakdown.length,
+      },
+    });
+  } catch (err) {
+    console.error("Error in contactTypeBreakdown:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch contact type breakdown",
+      error: err.message,
+    });
+  }
+};
+
+
 module.exports = {
   overviewAnalytics,
   monthlyNewClients,
   getTopUsersByActivity,
+  contactStatusBreakdown,
+  companyTypeBreakdown,
+  contactTypeBreakdown,
 };
