@@ -42,6 +42,8 @@ dbConnection();
 const userRoutes = require("./routes/users.route");
 const activityRoutes = require("./routes/activities.route");
 const clientRoutes = require("./routes/clients.route");
+const salesRoutes = require("./routes/sales.route");
+const saleOrderDetailsRoutes = require("./routes/saleOrderDetails.route");
 const overviewRoutes = require("./routes/overview.route");
 
 app.get("/", (_req, res) => {
@@ -50,6 +52,8 @@ app.get("/", (_req, res) => {
 app.use("/api/users", userRoutes);
 app.use("/api/activities", activityRoutes);
 app.use("/api/clients", clientRoutes);
+app.use("/api/sales", salesRoutes);
+app.use("/api/saleOrderDetails", saleOrderDetailsRoutes);
 app.use("/api/overview", overviewRoutes);
 
 app.listen(PORT, '0.0.0.0', () => {
