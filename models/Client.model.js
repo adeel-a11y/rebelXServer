@@ -177,12 +177,11 @@ const clientSchema = new mongoose.Schema(
       maxlength: [150, "NameCC cannot exceed 150 characters"],
     },
     expirationDateText: {
-      type: Number,
-      trim: true,
-      maxlength: [20, "ExpirationDate text cannot exceed 20 characters"],
+      type: Date,
+      default: Date.now,
     },
     ccNumberText: {
-      type: Number,
+      type: String,
       trim: true,
       maxlength: [30, "CCNumber text cannot exceed 30 characters"],
     },

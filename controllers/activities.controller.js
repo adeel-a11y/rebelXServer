@@ -394,14 +394,327 @@ const getActivitiesSummary = async (req, res) => {
   }
 };
 
-const getActivitiesListById = async (req, res) => {
+const getActivitiesListByClientId = async (req, res) => {
   try {
-    const doc = await Activity.findById(req.params.id).lean();
-    if (!doc)
-      return res.status(404).json({ success: false, message: "Not found" });
-    return res.status(200).json({ success: true, data: doc });
+    // 1. pagination (same logic as getActivitiesLists)
+    const pageRaw = parseInt(req.query.page, 10);
+    const limitRaw = parseInt(req.query.limit, 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const perReq = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 20;
+    const perPage = Math.min(perReq, 100); // hard cap 100 like main
+    const skip = (page - 1) * perPage;
+
+    // 2. sorting (reuse same style)
+    const sortBy = req.query.sortBy || "createdAt";
+    const sortDir = (req.query.sort || "desc").toLowerCase() === "asc" ? 1 : -1;
+
+    // 3. base filters
+    // we ALWAYS filter by clientId (from route param)
+    const clientIdParam = req.params.clientId; // this is the client we care about
+
+    const baseMatch = {
+      clientId: clientIdParam,
+    };
+
+    // Optional search "q" within that client's activities
+    if (req.query.q) {
+      const rx = new RegExp(req.query.q, "i");
+      baseMatch.$or = [
+        { description: rx },
+        { trackingId: rx },
+        { clientId: rx },
+        { userId: rx },
+        { type: rx },
+      ];
+      // BUT we still must enforce the clientId match.
+      // Easiest way: wrap the whole thing in $and.
+      // If we added $or above, restructure:
+      baseMatch.$and = [{ clientId: clientIdParam }];
+      delete baseMatch.clientId;
+    }
+
+    // Optional type[] filter (same normalization rules as main)
+    if (req.query.type) {
+      const rawTypes = String(req.query.type)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      const inList = [];
+      for (const t of rawTypes) {
+        const k = t.toLowerCase();
+        if (
+          k === "call" ||
+          k === "call_made" ||
+          k === "phone" ||
+          k === "phone_call"
+        ) {
+          inList.push(/^call(_made)?$/i);
+          inList.push(/^phone(_call)?$/i);
+        } else if (k === "email" || k === "email_sent") {
+          inList.push(/^email(_sent)?$/i);
+        } else {
+          inList.push(new RegExp("^" + escapeRegExp(t) + "$", "i"));
+        }
+      }
+
+      // attach to the right level depending on if we used $and/$or above
+      if (inList.length) {
+        const typeFilter = { type: { $in: inList } };
+        if (baseMatch.$and) {
+          baseMatch.$and.push(typeFilter);
+        } else {
+          baseMatch.type = { $in: inList };
+        }
+      }
+    }
+
+    // 4. date range filters (reuse same logic)
+    let dateFrom = null,
+      dateTo = null;
+    const preset = req.query.dateRange;
+
+    if (preset === "today") {
+      dateFrom = startOfToday();
+      dateTo = endOfToday();
+    } else if (preset === "this_month") {
+      dateFrom = startOfMonth();
+      dateTo = endOfMonth();
+    } else if (preset === "this_year") {
+      const y = new Date().getFullYear();
+      dateFrom = startOfYear(y);
+      dateTo = endOfYear(y);
+    } else if (preset === "prev_year") {
+      const y = new Date().getFullYear() - 1;
+      dateFrom = startOfYear(y);
+      dateTo = endOfYear(y);
+    }
+
+    // explicit from/to override
+    if (req.query.from) {
+      const f = new Date(req.query.from);
+      if (!isNaN(f)) dateFrom = f;
+    }
+    if (req.query.to) {
+      const t = new Date(req.query.to);
+      if (!isNaN(t)) dateTo = t;
+    }
+
+    const hasDateFilter = Boolean(dateFrom || dateTo);
+
+    // 5. collection names (just like main fn)
+    const usersColl = User.collection.name;
+    const clientsColl = Client.collection.name;
+
+    // 6. total count
+    let total;
+    if (hasDateFilter) {
+      const cnt = await Activity.aggregate(
+        [
+          { $match: baseMatch },
+          {
+            $addFields: {
+              _createdAtDate: {
+                $convert: {
+                  input: "$createdAt",
+                  to: "date",
+                  onError: null,
+                  onNull: null,
+                },
+              },
+            },
+          },
+          {
+            $match: {
+              _createdAtDate: {
+                ...(dateFrom ? { $gte: dateFrom } : {}),
+                ...(dateTo ? { $lte: dateTo } : {}),
+              },
+            },
+          },
+          { $count: "total" },
+        ],
+        { allowDiskUse: true }
+      );
+      total = cnt?.[0]?.total || 0;
+    } else {
+      total = await Activity.countDocuments(baseMatch);
+    }
+
+    // 7. main pipeline (copy of getActivitiesLists with baseMatch locked)
+    const pipeline = [
+      { $match: baseMatch },
+
+      ...(hasDateFilter
+        ? [
+            // normalize for date comparison
+            {
+              $addFields: {
+                _createdAtDate: {
+                  $convert: {
+                    input: "$createdAt",
+                    to: "date",
+                    onError: null,
+                    onNull: null,
+                  },
+                },
+              },
+            },
+            {
+              $match: {
+                _createdAtDate: {
+                  ...(dateFrom ? { $gte: dateFrom } : {}),
+                  ...(dateTo ? { $lte: dateTo } : {}),
+                },
+              },
+            },
+            { $sort: { _createdAtDate: sortDir } },
+          ]
+        : [{ $sort: { [sortBy]: sortDir } }]),
+
+      { $skip: skip },
+      { $limit: perPage },
+
+      // We'll still try to resolve readable client name & user display name
+      {
+        $addFields: {
+          _clientIdStr: {
+            $toString: { $ifNull: ["$clientId", ""] },
+          },
+        },
+      },
+
+      // Join user data (Activity.userId is email)
+      {
+        $lookup: {
+          from: usersColl,
+          localField: "userId",
+          foreignField: "email",
+          as: "_u",
+        },
+      },
+      {
+        $unwind: {
+          path: "$_u",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+
+      // Join client data (match Activity.clientId -> Client.externalId)
+      {
+        $lookup: {
+          from: clientsColl,
+          localField: "_clientIdStr",
+          foreignField: "externalId",
+          as: "_c",
+        },
+      },
+      {
+        $unwind: {
+          path: "$_c",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+
+      // Build final display values
+      {
+        $addFields: {
+          _userName1: {
+            $toString: { $ifNull: ["$_u.name", ""] },
+          },
+          _userFirst: {
+            $toString: { $ifNull: ["$_u.firstName", ""] },
+          },
+          _userLast: {
+            $toString: { $ifNull: ["$_u.lastName", ""] },
+          },
+          _userEmail: {
+            $toString: { $ifNull: ["$_u.email", ""] },
+          },
+        },
+      },
+      {
+        $addFields: {
+          _userFull: {
+            $trim: {
+              input: {
+                $concat: ["$_userFirst", " ", "$_userLast"],
+              },
+            },
+          },
+          clientId: { $ifNull: ["$_c.name", "$clientId"] },
+        },
+      },
+      {
+        $addFields: {
+          userId: {
+            $switch: {
+              branches: [
+                {
+                  case: { $ne: ["$_userName1", ""] },
+                  then: "$_userName1",
+                },
+                {
+                  case: { $ne: ["$_userFull", ""] },
+                  then: "$_userFull",
+                },
+                {
+                  case: { $ne: ["$_userEmail", ""] },
+                  then: "$_userEmail",
+                },
+              ],
+              default: "$userId",
+            },
+          },
+        },
+      },
+
+      // Cleanup temp fields
+      {
+        $project: {
+          _clientIdStr: 0,
+          _c: 0,
+          _u: 0,
+          _userName1: 0,
+          _userFirst: 0,
+          _userLast: 0,
+          _userEmail: 0,
+          _userFull: 0,
+          _createdAtDate: 0,
+        },
+      },
+    ];
+
+    const docs = await Activity.aggregate(pipeline, {
+      allowDiskUse: true,
+    });
+
+    // 8. response same shape as getActivitiesLists
+    return res.status(200).json({
+      rows: docs,
+      meta: {
+        page,
+        perPage,
+        total,
+        totalPages: Math.max(Math.ceil(total / perPage), 1),
+        hasPrev: page > 1,
+        hasNext: page * perPage < total,
+      },
+    });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+const getActivitiesListById = async (req, res) => {
+  try {
+    console.log(req.params.id);
+    const doc = await Activity.findById({ _id: req.params.id }).lean();
+    if (!doc)
+      return res.status(404).json({ success: false, message: "Not found" });
+    return res.status(200).json({ success: true, message: "Activity retrieved successfully", data: doc });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
   }
 };
 
@@ -446,6 +759,7 @@ const deleteActivityList = async (req, res) => {
 module.exports = {
   getActivitiesLists,
   getActivitiesSummary,
+  getActivitiesListByClientId,
   getActivitiesListById,
   createActivityList,
   updateActivityList,

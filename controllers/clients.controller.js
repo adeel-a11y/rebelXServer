@@ -319,10 +319,15 @@ const getClientsLists = async (req, res) => {
 
 const getClientsListById = async (req, res) => {
   try {
-    const clientsListById = await Client.findById(req.params.id);
-    return res.status(200).json(clientsListById);
+    const clientsListById = await Client.findById({ _id: req.params.id });
+    console.log(clientsListById);
+    return res.status(200).json({
+      success: true,
+      message: "Client retrieved successfully",
+      data: clientsListById,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 };
 
@@ -330,15 +335,17 @@ const getActivitiesByClient = async (req, res) => {
   try {
     const { id } = req.params;
 
+    console.log("request", req.query);
+    
     const escapeRegex = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // pagination params
-    const pageRaw  = parseInt(req.query.page, 10);
+    const pageRaw = parseInt(req.query.page, 10);
     const limitRaw = parseInt(req.query.limit, 10);
-    const page     = Number.isFinite(pageRaw)  && pageRaw  > 0 ? pageRaw  : 1;
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
     const limitReq = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
-    const perPage  = Math.min(limitReq, 100);
-    const skip     = (page - 1) * perPage;
+    const perPage = Math.min(limitReq, 100);
+    const skip = (page - 1) * perPage;
 
     // search param
     const q = (req.query.q || "").trim();
@@ -347,7 +354,9 @@ const getActivitiesByClient = async (req, res) => {
     // 1) find the client
     const client = await Client.findById(id).lean();
     if (!client) {
-      return res.status(404).json({ success: false, error: "Client not found" });
+      return res
+        .status(404)
+        .json({ success: false, error: "Client not found" });
     }
 
     // 2) base match
@@ -355,7 +364,14 @@ const getActivitiesByClient = async (req, res) => {
 
     // 3) optional search filter across common fields
     const searchMatch = rx
-      ? { $or: [{ type: rx }, { description: rx }, { trackingId: rx }, { userId: rx }] }
+      ? {
+          $or: [
+            { type: rx },
+            { description: rx },
+            { trackingId: rx },
+            { userId: rx },
+          ],
+        }
       : {};
 
     // 4) aggregate: counts + page + lookup
@@ -363,7 +379,11 @@ const getActivitiesByClient = async (req, res) => {
       { $match: { ...match, ...searchMatch } },
 
       // normalize type for robust counting
-      { $addFields: { _normType: { $toLower: { $ifNull: ["$type", "other"] } } } },
+      {
+        $addFields: {
+          _normType: { $toLower: { $ifNull: ["$type", "other"] } },
+        },
+      },
 
       // sort newest first (adjust if createdAt is string → convert to date first)
       { $sort: { createdAt: -1, _id: -1 } },
@@ -410,7 +430,15 @@ const getActivitiesByClient = async (req, res) => {
           emailCount: {
             $let: {
               vars: {
-                e: { $first: { $filter: { input: "$countsByType", as: "it", cond: { $eq: ["$$it.type", "email"] } } } },
+                e: {
+                  $first: {
+                    $filter: {
+                      input: "$countsByType",
+                      as: "it",
+                      cond: { $eq: ["$$it.type", "email"] },
+                    },
+                  },
+                },
               },
               in: { $ifNull: ["$$e.count", 0] },
             },
@@ -419,7 +447,15 @@ const getActivitiesByClient = async (req, res) => {
           callCount: {
             $let: {
               vars: {
-                c: { $first: { $filter: { input: "$countsByType", as: "it", cond: { $eq: ["$$it.type", "call"] } } } },
+                c: {
+                  $first: {
+                    $filter: {
+                      input: "$countsByType",
+                      as: "it",
+                      cond: { $eq: ["$$it.type", "call"] },
+                    },
+                  },
+                },
               },
               in: { $ifNull: ["$$c.count", 0] },
             },
@@ -428,11 +464,11 @@ const getActivitiesByClient = async (req, res) => {
       },
     ]);
 
-    const total      = agg?.total || 0;
-    const data       = agg?.data || [];
+    const total = agg?.total || 0;
+    const data = agg?.data || [];
     const totalPages = Math.max(Math.ceil(total / perPage), 1);
     const emailCount = agg?.emailCount || 0;
-    const callCount  = agg?.callCount || 0;
+    const callCount = agg?.callCount || 0;
 
     return res.status(200).json({
       success: true,
@@ -483,6 +519,14 @@ const createClientList = async (req, res) => {
 
 const updateClientList = async (req, res) => {
   try {
+    const { expirationDateText } = req.body;
+
+    if (expirationDateText) {
+      req.body.expirationDateText = new Date(expirationDateText);
+    }
+
+    console.log(req.body);
+
     const clientsList = await Client.findByIdAndUpdate(
       req.params.id,
       req.body,
