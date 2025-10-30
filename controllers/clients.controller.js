@@ -1,6 +1,7 @@
 // controllers/clients.controller.js
 const Client = require("../models/Client.model");
 const User = require("../models/User.model");
+const SaleOrder = require("../models/SaleOrders");
 const Activity = require("../models/Activity.model");
 
 /* --------------------------------- helpers -------------------------------- */
@@ -16,6 +17,7 @@ const CONTACT_STATUSES = [
 ];
 
 const escapeReg = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const csvToArray = (v) =>
   String(v || "")
     .split(",")
@@ -192,11 +194,11 @@ const getClientsLists = async (req, res) => {
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
     const limitReq = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 20;
     const perPage = Math.min(limitReq, 100);
+    const skip = (page - 1) * perPage;
 
+    // keep your user-provided sort as a tie-breaker
     const sortBy = req.query.sortBy || "createdAt";
     const sortDir = (req.query.sort || "desc").toLowerCase() === "asc" ? 1 : -1;
-    const sort = { [sortBy]: sortDir };
-    const skip = (page - 1) * perPage;
 
     // base query
     const where = {};
@@ -207,24 +209,13 @@ const getClientsLists = async (req, res) => {
     if (qRaw) {
       const words = qRaw.split(/\s+/).map(escapeReg).filter(Boolean);
       const regexes = words.map((w) => new RegExp(w, "i"));
-      const searchFields = [
-        "name",
-        "email",
-        "phone",
-        "city",
-        "state",
-        "website",
-        "ownedBy",
-        "contactStatus",
-      ];
-      and.push(
-        ...regexes.map((r) => ({ $or: searchFields.map((f) => ({ [f]: r })) }))
-      );
+      const searchFields = ["name", "email", "phone", "city", "state", "website", "ownedBy", "contactStatus"];
+      and.push(...regexes.map((r) => ({ $or: searchFields.map((f) => ({ [f]: r })) })));
     }
 
     // ---- filters ----
     const statusesArr = csvToArray(req.query.statuses);
-    const statesArr = csvToArray(req.query.states);
+    const statesArr   = csvToArray(req.query.states);
 
     if (statusesArr.length) {
       const statusRegexes = [];
@@ -244,7 +235,7 @@ const getClientsLists = async (req, res) => {
         if (!s) continue;
         expanded.add(s);
         const upper = s.toUpperCase();
-        if (STATE_ABBR[upper]) expanded.add(STATE_ABBR[upper]); // e.g., Iowa -> IA
+        if (STATE_ABBR[upper]) expanded.add(STATE_ABBR[upper]);
       }
       const stateRegexes = [];
       for (const token of expanded) {
@@ -257,20 +248,62 @@ const getClientsLists = async (req, res) => {
 
     if (and.length) where.$and = and;
 
+    // helper to parse the order timestamp inside the lookup
+    const tsAsDate = {
+      $ifNull: [
+        {
+          $dateFromString: {
+            dateString: "$TimeStamp",
+            format: "%m/%d/%Y %H:%M:%S",
+            onError: { $toDate: "$TimeStamp" },
+          },
+        },
+        { $toDate: "$TimeStamp" },
+      ],
+    };
+
     // ---- query DB ----
     const [total, clients] = await Promise.all([
       Client.countDocuments(where),
 
       Client.aggregate([
         { $match: where },
-        { $sort: sort },
+
+        // Join each client's LATEST order (Client.externalId -> Orders.ClientID)
+        {
+          $lookup: {
+            from: SaleOrder.collection.name,            // e.g., "saleorders"
+            let: { extId: "$externalId" },
+            pipeline: [
+              { $match: { $expr: { $eq: ["$ClientID", "$$extId"] } } },
+              { $addFields: { _parsedTime: tsAsDate } },
+              { $sort: { _parsedTime: -1 } },
+              { $limit: 1 },
+              { $project: { _id: 0, lastOrderTime: "$_parsedTime" } },
+            ],
+            as: "latestOrder",
+          },
+        },
+        // Extract fields for sorting
+        {
+          $addFields: {
+            lastOrderTime: { $first: "$latestOrder.lastOrderTime" }, // Date or null
+            hasOrder: { $cond: [{ $gt: [{ $size: "$latestOrder" }, 0] }, 1, 0] },
+          },
+        },
+        { $project: { latestOrder: 0 } },
+
+        // Sort: clients with orders first (newest → oldest), then no-order clients
+        { $sort: { hasOrder: -1, lastOrderTime: -1, [sortBy]: sortDir } },
+
+        // Pagination
         { $skip: skip },
         { $limit: perPage },
 
         // join users by email (ownedBy holds email string)
         {
           $lookup: {
-            from: "users", // << change if your collection name differs
+            from: "users", // change if actual collection name differs
             let: { ownedEmail: "$ownedBy" },
             pipeline: [
               { $match: { $expr: { $eq: ["$email", "$$ownedEmail"] } } },
@@ -279,20 +312,13 @@ const getClientsLists = async (req, res) => {
             as: "ownerDoc",
           },
         },
-
-        // Add 'ownerName' (fallback = original email or empty)
+        // add ownerName, clean up
         {
           $addFields: {
-            ownerName: {
-              $ifNull: [{ $first: "$ownerDoc.name" }, "$ownedBy"],
-            },
+            ownerName: { $ifNull: [{ $first: "$ownerDoc.name" }, "$ownedBy"] },
           },
         },
-
-        // optional: hide the joined array; keep ownedBy for back-compat
         { $project: { ownerDoc: 0 } },
-        // If you want to completely replace ownedBy with name:
-        // { $project: { ownerDoc: 0, ownedBy: 0 } }
       ]),
     ]);
 
@@ -309,7 +335,7 @@ const getClientsLists = async (req, res) => {
       hasNext: page < totalPages,
       prevPage: page > 1 ? page - 1 : null,
       nextPage: page < totalPages ? page + 1 : null,
-      data: clients, // now includes ownerName
+      data: clients, // unchanged shape, only ordering changed
       meta: { total, page, perPage },
     });
   } catch (error) {
@@ -516,25 +542,47 @@ const createClientList = async (req, res) => {
 };
 
 /* ------------------------------- UPDATE -------------------------------------- */
-
 const updateClientList = async (req, res) => {
   try {
-    const { expirationDateText } = req.body;
+    const { expirationDateText, fullName } = req.body || {};
 
+    // Build an update doc so we can mutate safely
+    const update = { ...req.body };
+
+    // Optional: normalize expirationDateText if sent
     if (expirationDateText) {
-      req.body.expirationDateText = new Date(expirationDateText);
+      update.expirationDateText = new Date(expirationDateText);
     }
 
-    console.log(req.body);
+    // If a fullName is provided, look up the user and sync ownedBy (email)
+    if (typeof fullName === "string" && fullName.trim()) {
+      const trimmed = fullName.trim();
 
-    const clientsList = await Client.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true }
-    );
-    return res.status(200).json(clientsList);
+      // Case-insensitive exact match on name
+      const user = await User.findOne({
+        name: new RegExp(`^${escapeReg(trimmed)}$`, "i"),
+      }).lean();
+
+      if (!user) {
+        return res
+          .status(400)
+          .json({ success: false, message: `No user found with name "${trimmed}"` });
+      }
+
+      // Sync ownedBy email to the matched user's email
+      update.ownedBy = user.email;
+
+      // (Optional) normalize fullName to the canonical user.name
+      update.fullName = user.name;
+    }
+
+    const client = await Client.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+    });
+
+    return res.status(200).json({ success: true, data: client });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 };
 

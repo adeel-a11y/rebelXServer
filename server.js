@@ -38,6 +38,8 @@ app.use("/api", require("./routes/ping_routes"));
 // DB
 dbConnection();
 
+
+
 // Routes
 const userRoutes = require("./routes/users.route");
 const activityRoutes = require("./routes/activities.route");

@@ -2,6 +2,7 @@ const express = require("express");
 const {
   getSaleOrdersLists,
   getSaleOrdersListById,
+  getLatestOrderPerClient,
   createSaleOrder,
   updateSaleOrder,
   deleteSaleOrder,
@@ -12,6 +13,7 @@ const router = express.Router();
 // GET
 router.get("/lists", getSaleOrdersLists);
 router.get("/lists/:id", getSaleOrdersListById);
+router.get("/latest-order-per-client", getLatestOrderPerClient);
 
 // POST
 router.post("/", createSaleOrder);
