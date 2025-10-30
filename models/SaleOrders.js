@@ -135,6 +135,7 @@ const saleOrderSchema = new mongoose.Schema(
     // OrderStatus: "Completed"
     OrderStatus: {
       type: String,
+      enum: ["Pending", "Confirmed", "Processing", "Shipping", "Delivered", "Completed", "Issued", "Pending Payment", "Cancelled", "Returned"],
       trim: true,
     },
   },
