@@ -11,7 +11,7 @@ const PORT = 3000;
 // --- CORS ---
 const allowedOrigins = [
   "http://localhost:5173", // Localhost (development)
-  "https://rebel-x-client.vercel.app"
+  "https://rebel-x-client.vercel.app",
 ];
 
 // middleware
@@ -38,8 +38,6 @@ app.use("/api", require("./routes/ping_routes"));
 // DB
 dbConnection();
 
-
-
 // Routes
 const userRoutes = require("./routes/users.route");
 const activityRoutes = require("./routes/activities.route");
@@ -58,13 +56,13 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/saleOrderDetails", saleOrderDetailsRoutes);
 app.use("/api/overview", overviewRoutes);
 
-app.listen(PORT, '0.0.0.0', () => {
-    setInterval(async () => {
-        try {
-            await axios.get('https://rebelxserver.onrender.com/api/ping');
-            console.log(`[AutoPing] Successful at ${new Date().toISOString()}`);
-        } catch (err) {
-            console.error('[AutoPing] Failed:', err.message);
-        }
-    }, 10 * 60 * 1000);
+app.listen(PORT, "0.0.0.0", () => {
+  setInterval(async () => {
+    try {
+      await axios.get("https://rebelxserver.onrender.com/api/ping");
+      console.log(`[AutoPing] Successful at ${new Date().toISOString()}`);
+    } catch (err) {
+      console.error("[AutoPing] Failed:", err.message);
+    }
+  }, 10 * 60 * 1000);
 });
