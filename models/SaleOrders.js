@@ -1,5 +1,32 @@
 const mongoose = require("mongoose");
 
+const PAYMENT_METHODS = [
+  "",               // keep empty as valid default
+  "CARD",           // credit/debit card (generic)
+  "CASH",
+  "CHECK",
+  "PAYPAL",
+  "VENMO",
+  "SQUARE",
+  "BANK_TRANSFER",
+  "ACH",
+  "WIRE",
+  "OTHER",
+];
+
+const SHIPPING_METHODS = [
+  "",
+  "PICKUP",
+  "LOCAL_COURIER",
+  "UPS",
+  "FEDEX",
+  "USPS",
+  "DHL",
+  "LTL_FREIGHT",
+  "DELIVERY",
+  "OTHER",
+];
+
 const saleOrderSchema = new mongoose.Schema(
   {
     // OrderID: "15694"
@@ -44,8 +71,10 @@ const saleOrderSchema = new mongoose.Schema(
     // PaymentMethod: ""
     PaymentMethod: {
       type: String,
+      enum: PAYMENT_METHODS,
       default: "",
       trim: true,
+      set: (v) => (v ?? "").toString().trim().toUpperCase(),
     },
 
     // ShippedDate: ""
@@ -58,8 +87,10 @@ const saleOrderSchema = new mongoose.Schema(
     // ShippingMethod: ""
     ShippingMethod: {
       type: String,
+      enum: SHIPPING_METHODS,
       default: "",
       trim: true,
+      set: (v) => (v ?? "").toString().trim().toUpperCase(),
     },
 
     // Tracking: ""
@@ -135,6 +166,7 @@ const saleOrderSchema = new mongoose.Schema(
     // OrderStatus: "Completed"
     OrderStatus: {
       type: String,
+      enum: ["Pending", "Confirmed", "Processing", "Shipping", "Delivered", "Completed", "Issued", "Pending Payment", "Cancelled", "Returned"],
       trim: true,
     },
   },
