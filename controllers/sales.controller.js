@@ -77,79 +77,6 @@ function midnightRangeForPreset(preset) {
   }
 }
 
-const esc = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const normalize = (v) => String(v || "").trim();
-
-/** Resolve Client: name OR externalId -> externalId (canonical) */
-async function resolveClientExternalId(input) {
-  const token = normalize(input);
-  if (!token) return null;
-
-  // if it already looks like an externalId and exists, return as-is
-  let found = await Client.findOne({ externalId: token }, { _id: 0, externalId: 1 }).lean();
-  if (found?.externalId) return found.externalId;
-
-  // else try exact name (case-insensitive)
-  found = await Client.findOne(
-    { name: { $regex: new RegExp(`^${esc(token)}$`, "i") } },
-    { _id: 0, externalId: 1 }
-  ).lean();
-
-  return found?.externalId || null;
-}
-
-/** Resolve User: name OR email -> email (canonical) */
-async function resolveUserEmail(input) {
-  const token = normalize(input);
-  if (!token) return null;
-
-  // if already an email and exists, return as-is
-  let found = await User.findOne(
-    { email: token.toLowerCase() },
-    { _id: 0, email: 1 }
-  ).lean();
-  if (found?.email) return found.email.toLowerCase();
-
-  // else try exact name (case-insensitive)
-  found = await User.findOne(
-    { name: { $regex: new RegExp(`^${esc(token)}$`, "i") } },
-    { _id: 0, email: 1 }
-  ).lean();
-
-  return found?.email?.toLowerCase() || null;
-}
-
-function midnightRangeForPreset(preset) {
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const d = now.getUTCDate();
-  const start = new Date(now);
-  const end = new Date(now);
-
-  switch ((preset || "").toLowerCase()) {
-    case "today":
-      start.setUTCHours(0, 0, 0, 0);
-      end.setUTCDate(d + 1); end.setUTCHours(0, 0, 0, 0);
-      return { start, end };
-    case "this_month":
-      start.setUTCFullYear(y, m, 1); start.setUTCHours(0, 0, 0, 0);
-      end.setUTCFullYear(y, m + 1, 1); end.setUTCHours(0, 0, 0, 0);
-      return { start, end };
-    case "this_year":
-      start.setUTCFullYear(y, 0, 1); start.setUTCHours(0, 0, 0, 0);
-      end.setUTCFullYear(y + 1, 0, 1); end.setUTCHours(0, 0, 0, 0);
-      return { start, end };
-    case "prev_year":
-      start.setUTCFullYear(y - 1, 0, 1); start.setUTCHours(0, 0, 0, 0);
-      end.setUTCFullYear(y, 0, 1); end.setUTCHours(0, 0, 0, 0);
-      return { start, end };
-    default:
-      return null;
-  }
-}
-
 /* --------------------------------------- GET ---------------------------------- */
 const getSaleOrdersLists = async (req, res) => {
   try {
@@ -600,11 +527,8 @@ const createSaleOrder = async (req, res) => {
     ];
     if (required.some((x) => !normalize(x)))
       return res.status(400).json({ success: false, message: "Missing required fields" });
-<<<<<<< HEAD
 
     console.log(body);
-=======
->>>>>>> origin/main
 
     const saleOrder = await SaleOrder.create({
       ClientID: resolvedClientId,     // canonical externalId
@@ -643,12 +567,9 @@ const updateSaleOrder = async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
-
-<<<<<<< HEAD
     console.log(body);
 
-=======
->>>>>>> origin/main
+
     const update = { ...body };
 
     // If caller sent ClientID (name or externalId), resolve to externalId
