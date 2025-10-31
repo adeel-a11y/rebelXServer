@@ -219,6 +219,7 @@ const getSaleOrdersLists = async (req, res) => {
     // ---- projection ----
     const projection = {
       _id: 1,
+      Label: 1,
       OrderID: 1,
       ClientID: 1,
       SalesRep: 1,
@@ -229,6 +230,10 @@ const getSaleOrdersLists = async (req, res) => {
       OrderStatus: 1,
       TimeStampDate: 1,
       createdAt: 1,
+      Discount: 1,
+      Tax: 1,
+      Total: 1,
+      GrandTotal: 1,
     };
 
     // ---- query ----
@@ -263,6 +268,7 @@ const getSaleOrdersLists = async (req, res) => {
 
     const data = saleOrdersPage.map((o) => ({
       _id: o._id,
+      Label: o.Label,
       OrderID: o.OrderID,
       ClientID: nameByExternalId.get((o.ClientID || "").trim()) || o.ClientID || null,
       SalesRep: nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) || o.SalesRep || null,
@@ -271,6 +277,10 @@ const getSaleOrdersLists = async (req, res) => {
       State: o.State || null,
       LockPrices: o.LockPrices ?? null,
       OrderStatus: o.OrderStatus || null,
+      Discount: o.Discount || 0,
+      Tax: o.Tax || 0,
+      Total: o.PaymentAmount || 0,
+      GrandTotal: o.PaymentAmount || 0,
     }));
 
     const totalPages = Math.ceil(totalDocs / PAGE_SIZE);
