@@ -3,10 +3,20 @@ const SaleOrderDetail = require("../models/SaleOrderDetails");
 const Client = require("../models/Client.model");
 const User = require("../models/User.model");
 const mongoose = require("mongoose");
+const crypto = require('crypto');
+const Counter = require('../models/Counter.model');
 
 const esc = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const normalize = (v) => String(v || "").trim();
+
+const toNumber = (v) => {
+  if (v == null) return 0;
+  if (typeof v === "number") return v;
+  const s = String(v).replace(/[^\d.-]/g, ""); // strip $ , and spaces
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+};
 
 /** Resolve Client: name OR externalId -> externalId (canonical) */
 async function resolveClientExternalId(input) {
@@ -91,7 +101,7 @@ const getSaleOrdersLists = async (req, res) => {
     const statusesRaw = String(req.query.statuses || "").trim(); // "pending,shipped"
     const datePreset = (req.query.datePreset || "").trim().toLowerCase();
     const fromRaw = req.query.from ? new Date(req.query.from) : null;
-    const toRaw   = req.query.to ? new Date(req.query.to) : null;
+    const toRaw = req.query.to ? new Date(req.query.to) : null;
 
     // ---- base where ----
     const where = {};
@@ -232,6 +242,7 @@ const getSaleOrdersLists = async (req, res) => {
       createdAt: 1,
       Discount: 1,
       Tax: 1,
+      ShippingCost: 1,
       Total: 1,
       GrandTotal: 1,
     };
@@ -245,6 +256,29 @@ const getSaleOrdersLists = async (req, res) => {
         .limit(PAGE_SIZE)
         .lean(),
     ]);
+
+    const itemsTotal = await SaleOrderDetail.find({ OrderID: projection.OrderID }).select("Total").lean();
+
+    const orderIds = [...new Set(saleOrdersPage.map(o => o.OrderID).filter(Boolean))];
+
+    // ---- Load details for these orders in ONE query ----
+    let details = [];
+    if (orderIds.length) {
+      details = await SaleOrderDetail.find(
+        { OrderID: { $in: orderIds } },
+        { _id: 0, OrderID: 1, Total: 1, Price: 1, QtyShipped: 1 }
+      ).lean();
+    }
+
+    const subtotalByOrderId = new Map();
+    for (const d of details) {
+      // Row total: prefer detail.Total; fallback = qty * price
+      const rowTotal =
+        toNumber(d.Total) || (toNumber(d.QtyShipped) * toNumber(d.Price));
+
+      const prev = subtotalByOrderId.get(d.OrderID) || 0;
+      subtotalByOrderId.set(d.OrderID, prev + rowTotal);
+    }
 
     // ---- page-scoped name resolution ----
     const clientKeys = [
@@ -266,22 +300,36 @@ const getSaleOrdersLists = async (req, res) => {
     const nameByExternalId = new Map(clients.map((c) => [c.externalId, c.name]));
     const nameByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u.name]));
 
-    const data = saleOrdersPage.map((o) => ({
-      _id: o._id,
-      Label: o.Label,
-      OrderID: o.OrderID,
-      ClientID: nameByExternalId.get((o.ClientID || "").trim()) || o.ClientID || null,
-      SalesRep: nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) || o.SalesRep || null,
-      TimeStamp: o.TimeStamp || null,
-      City: o.City || null,
-      State: o.State || null,
-      LockPrices: o.LockPrices ?? null,
-      OrderStatus: o.OrderStatus || null,
-      Discount: o.Discount || 0,
-      Tax: o.Tax || 0,
-      Total: o.PaymentAmount || 0,
-      GrandTotal: o.PaymentAmount || 0,
-    }));
+    const data = saleOrdersPage.map((o) => {
+      const itemsSubtotal = subtotalByOrderId.get(o.OrderID) ?? 0;
+      const shipping = toNumber(o.ShippingCost);
+      const tax = toNumber(o.Tax);
+      const discount = toNumber(o.Discount);
+
+      const total = itemsSubtotal;                          // items ka sum
+      const grand = itemsSubtotal + shipping + tax - discount; // requested formula
+
+      return {
+        _id: o._id,
+        Label: o.Label,
+        OrderID: o.OrderID,
+        ClientID: nameByExternalId.get((o.ClientID || "").trim()) || o.ClientID || null,
+        SalesRep: nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) || o.SalesRep || null,
+        TimeStamp: o.TimeStamp || null,
+        City: o.City || null,
+        State: o.State || null,
+        LockPrices: o.LockPrices ?? null,
+        OrderStatus: o.OrderStatus || null,
+
+        Discount: toNumber(o.Discount),
+        Tax: toNumber(o.Tax),
+        ShippingCost: toNumber(o.ShippingCost),
+
+        // computed values (round if chaho)
+        Total: Math.round(total * 100) / 100,
+        GrandTotal: Math.round(grand * 100) / 100,
+      };
+    });
 
     const totalPages = Math.ceil(totalDocs / PAGE_SIZE);
 
@@ -303,6 +351,220 @@ const getSaleOrdersLists = async (req, res) => {
   }
 };
 
+async function getSaleOrdersByClient(req, res) {
+  try {
+    const PAGE_SIZE = 100;
+    const pageRaw = parseInt(req.query.page, 10);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+    const skip = (page - 1) * PAGE_SIZE;
+
+    // ---- required filter from route param ----
+    const externalId = String(req.params.externalId || '').trim();
+    if (!externalId) {
+      return res.status(400).json({ success: false, message: "externalId (Client externalId) is required" });
+    }
+
+    // ---- optional params (same as list) ----
+    const q = String(req.query.q || "").trim();
+    const statusesRaw = String(req.query.statuses || "").trim();
+    const datePreset = (req.query.datePreset || "").trim().toLowerCase();
+    const fromRaw = req.query.from ? new Date(req.query.from) : null;
+    const toRaw = req.query.to ? new Date(req.query.to) : null;
+
+    // ---- base where ----
+    const where = { ClientID: externalId }; // <- key constraint
+    const and = [];
+
+    // STATUS
+    if (statusesRaw) {
+      const rxList = statusesRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => new RegExp(`^${esc(s.toLowerCase())}$`, "i"));
+      if (rxList.length) and.push({ OrderStatus: { $in: rxList } });
+    }
+
+    // DATE
+    let range = null;
+    if (fromRaw && !isNaN(fromRaw)) {
+      const start = new Date(fromRaw); start.setUTCHours(0, 0, 0, 0);
+      const end = toRaw && !isNaN(toRaw) ? new Date(toRaw) : new Date(fromRaw);
+      end.setUTCDate(end.getUTCDate() + 1); end.setUTCHours(0, 0, 0, 0);
+      range = { start, end };
+    } else if (datePreset) {
+      range = midnightRangeForPreset(datePreset);
+    }
+    if (range) {
+      and.push({
+        $or: [
+          { TimeStampDate: { $gte: range.start, $lt: range.end } },
+          {
+            $expr: {
+              $and: [
+                {
+                  $gte: [
+                    {
+                      $ifNull: [
+                        {
+                          $dateFromString: {
+                            dateString: "$TimeStamp",
+                            format: "%m/%d/%Y %H:%M:%S",
+                            onError: { $toDate: "$TimeStamp" },
+                            onNull: null,
+                          },
+                        },
+                        null,
+                      ],
+                    },
+                    range.start,
+                  ],
+                },
+                {
+                  $lt: [
+                    {
+                      $ifNull: [
+                        {
+                          $dateFromString: {
+                            dateString: "$TimeStamp",
+                            format: "%m/%d/%Y %H:%M:%S",
+                            onError: { $toDate: "$TimeStamp" },
+                            onNull: null,
+                          },
+                        },
+                        null,
+                      ],
+                    },
+                    range.end,
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
+
+    // SEARCH (optional) — still constrained to this client
+    if (q) {
+      const rx = new RegExp(esc(q), "i");
+      and.push({
+        $or: [
+          { OrderID: rx },
+          { City: rx },
+          { State: rx },
+          { OrderStatus: rx },
+          { SalesRep: rx }
+          // SalesRep name/email
+          // (email direct match; name -> map to emails first if you want, or skip to keep this lighter)
+        ],
+      });
+    }
+
+    if (and.length) where.$and = and;
+
+    // ---- projection ----
+    const projection = {
+      _id: 1, Label: 1, OrderID: 1, ClientID: 1, SalesRep: 1,
+      TimeStamp: 1, City: 1, State: 1, LockPrices: 1, OrderStatus: 1,
+      TimeStampDate: 1, createdAt: 1, Discount: 1, Tax: 1, ShippingCost: 1
+    };
+
+    // ---- query ----
+    const [totalDocs, saleOrdersPage] = await Promise.all([
+      SaleOrder.countDocuments(where),
+      SaleOrder.find(where, projection)
+        .sort({ TimeStampDate: -1, createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(PAGE_SIZE)
+        .lean(),
+    ]);
+
+    // ---- detail rows for ONLY these orders ----
+    const orderIds = [...new Set(saleOrdersPage.map(o => o.OrderID).filter(Boolean))];
+
+    let details = [];
+    if (orderIds.length) {
+      details = await SaleOrderDetail.find(
+        { OrderID: { $in: orderIds } },
+        { _id: 0, OrderID: 1, Total: 1, Price: 1, QtyShipped: 1 }
+      ).lean();
+    }
+
+    // ---- sum items per order ----
+    const subtotalByOrderId = new Map();
+    for (const d of details) {
+      const rowTotal =
+        toNumber(d.Total) || (toNumber(d.QtyShipped) * toNumber(d.Price));
+      subtotalByOrderId.set(d.OrderID, (subtotalByOrderId.get(d.OrderID) || 0) + rowTotal);
+    }
+
+    // ---- join names (client + rep) ----
+    const repKeys = [
+      ...new Set(saleOrdersPage.map((o) => (o.SalesRep || "").toLowerCase().trim()).filter(Boolean)),
+    ];
+    const users = repKeys.length
+      ? await User.find({ email: { $in: repKeys } }, { _id: 0, email: 1, name: 1 }).lean()
+      : [];
+    const nameByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u.name]));
+
+    // Optional: fetch client name once (we already know externalId)
+    const clientDoc = await Client.findOne(
+      { externalId: externalId },
+      { _id: 0, name: 1, externalId: 1 }
+    ).lean();
+    const clientName = clientDoc?.name || externalId;
+
+    // ---- shape response with computed totals ----
+    const rows = saleOrdersPage.map((o) => {
+      const itemsSubtotal = subtotalByOrderId.get(o.OrderID) ?? 0;
+      const shipping = toNumber(o.ShippingCost);
+      const tax = toNumber(o.Tax);
+      const discount = toNumber(o.Discount);
+
+      const total = itemsSubtotal;
+      const grand = itemsSubtotal + shipping + tax - discount;
+
+      return {
+        _id: o._id,
+        Label: o.Label,
+        OrderID: o.OrderID,
+        Client: clientName, // human name
+        SalesRep: nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) || o.SalesRep || null,
+        TimeStamp: o.TimeStamp || null,
+        City: o.City || null,
+        State: o.State || null,
+        LockPrices: o.LockPrices ?? null,
+        OrderStatus: o.OrderStatus || null,
+        Discount: toNumber(o.Discount),
+        Tax: toNumber(o.Tax),
+        ShippingCost: toNumber(o.ShippingCost),
+        Total: Math.round(total * 100) / 100,
+        GrandTotal: Math.round(grand * 100) / 100,
+      };
+    });
+
+    const totalPages = Math.ceil(totalDocs / PAGE_SIZE);
+
+    return res.status(200).json({
+      success: true,
+      message: "Client orders retrieved successfully",
+      client: { externalId, name: clientName },
+      pagination: {
+        page,
+        limit: PAGE_SIZE,
+        totalDocs,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+      data: rows,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 const getSaleOrdersListById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -311,54 +573,91 @@ const getSaleOrdersListById = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid order id" });
     }
 
-    // 1) Find the base order
-    const order = await SaleOrder.findById(id).lean();
-    if (!order) {
+    // ---- Aggregation: 1) pick order by _id  2) join details by OrderID  3) resolve client/user names
+    const rows = await SaleOrder.aggregate([
+      { $match: { _id: new mongoose.Types.ObjectId(id) } },
+
+      // Join all SaleOrderDetails having same OrderID (string)
+      {
+        $lookup: {
+          from: "SaleOrderDetails",
+          localField: "OrderID",
+          foreignField: "OrderID",
+          as: "items",
+        },
+      },
+
+      // Resolve client name
+      {
+        $lookup: {
+          from: "clients", // <- your clients collection name (check actual)
+          let: { extId: "$ClientID" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$externalId", "$$extId"] } } },
+            { $project: { _id: 0, name: 1, externalId: 1 } },
+          ],
+          as: "clientDoc",
+        },
+      },
+
+      // Resolve user name
+      {
+        $lookup: {
+          from: "users", // <- your users collection name (check actual)
+          let: { email: { $toLower: { $ifNull: ["$SalesRep", ""] } } },
+          pipeline: [
+            { $match: { $expr: { $eq: [{ $toLower: "$email" }, "$$email"] } } },
+            { $project: { _id: 0, name: 1, email: 1 } },
+          ],
+          as: "userDoc",
+        },
+      },
+
+      // Shape output similar to your example
+      {
+        $addFields: {
+          ClientID: { $ifNull: [{ $first: "$clientDoc.name" }, "$ClientID"] },
+          SalesRep: { $ifNull: [{ $first: "$userDoc.name" }, "$SalesRep"] },
+          itemsCount: { $size: "$items" },
+          originals: {
+            ClientID: "$ClientID",
+            SalesRepEmail: "$SalesRep",
+          },
+        },
+      },
+
+      // Clean extras
+      {
+        $project: {
+          clientDoc: 0,
+          userDoc: 0,
+          __v: 0,
+        },
+      },
+    ]);
+
+    if (!rows.length) {
       return res
         .status(404)
         .json({ success: false, message: "Sale order not found", data: null });
     }
 
-    // 2) Fetch order items + lookups (client name, sales rep name) in parallel
-    const [items, clientDoc, userDoc] = await Promise.all([
-      // All lines where foreign OrderID matches the order's OrderID (string)
-      SaleOrderDetail.find({ OrderID: order.OrderID }).lean(),
-
-      // Map external id -> client name
-      order.ClientID
-        ? Client.findOne(
-            { externalId: order.ClientID },
-            { _id: 0, name: 1, externalId: 1 }
-          ).lean()
-        : null,
-
-      // Map email -> user name
-      order.SalesRep
-        ? User.findOne(
-            { email: (order.SalesRep || "").toLowerCase().trim() },
-            { _id: 0, name: 1, email: 1 }
-          ).lean()
-        : null,
-    ]);
-
-    // 3) Build merged payload
+    // Final payload: keep _id & order fields, include items array
+    const order = rows[0];
     const merged = {
-      // keep Mongo id
       _id: order._id,
-
-      // show human-friendly fields while preserving originals in `originals`
       OrderID: order.OrderID,
       Label: order.Label,
-      Client: clientDoc?.name || order.ClientID || "",     // <-- resolved
-      SalesRep: userDoc?.name || order.SalesRep || "",     // <-- resolved
+      ClientID: order.ClientID,     // resolved to name if available
+      SalesRep: order.SalesRep,     // resolved to name if available
 
-      // keep the rest of the order fields as-is
+      // Order fields (no duplicate Tracking)
+      Tracking: order.Tracking || "",
       TimeStamp: order.TimeStamp,
       Discount: order.Discount,
       PaymentMethod: order.PaymentMethod,
       ShippedDate: order.ShippedDate,
       ShippingMethod: order.ShippingMethod,
-      Tracking: order.Tracking,
       ShippingCost: order.ShippingCost,
       Tax: order.Tax,
       Paid: order.Paid,
@@ -370,15 +669,11 @@ const getSaleOrdersListById = async (req, res) => {
       LockPrices: order.LockPrices,
       OrderStatus: order.OrderStatus,
 
-      // full details/items
-      items: items || [],
-      itemsCount: (items || []).length,
+      // Embedded details
+      items: order.items || [],
+      itemsCount: order.itemsCount || 0,
 
-      // (optional) preserve raw identifiers in case you ever need them
-      originals: {
-        ClientID: order.ClientID,
-        SalesRepEmail: order.SalesRep,
-      },
+      originals: order.originals || {},
     };
 
     return res.status(200).json({
@@ -511,22 +806,19 @@ async function getLatestOrderPerClient(req, res) {
   });
 }
 
-/* --------------------------------------- CREATE ---------------------------------- */
-const createSaleOrder = async (req, res) => {
+/* --------------------------------------- CREATE (Order only) ---------------------------------- */
+async function createSaleOrder(req, res) {
   try {
     const body = req.body || {};
 
-    // Resolve identifiers from flexible inputs
+    // 1) Resolve inputs for SaleOrder
     const resolvedClientId = await resolveClientExternalId(body.ClientID);
-    const resolvedSalesRep  = await resolveUserEmail(body.SalesRep);
-
+    const resolvedSalesRep = await resolveUserEmail(body.SalesRep);
     if (!resolvedClientId)
       return res.status(400).json({ success: false, message: "Client not found (by name or externalId)" });
-
     if (!resolvedSalesRep)
       return res.status(400).json({ success: false, message: "Sales rep not found (by name or email)" });
 
-    // Required fields after resolution
     const required = [
       resolvedClientId,
       resolvedSalesRep,
@@ -538,11 +830,54 @@ const createSaleOrder = async (req, res) => {
     if (required.some((x) => !normalize(x)))
       return res.status(400).json({ success: false, message: "Missing required fields" });
 
-    console.log(body);
+    // 2) Compute base for label auto-increment
+    const maxLabelDoc = await SaleOrder.aggregate([
+      { $match: { Label: { $type: "string" } } },
+      { $addFields: { labelNum: { $toInt: { $ifNull: ["$Label", "0"] } } } },
+      { $group: { _id: null, maxLabel: { $max: "$labelNum" } } },
+    ]);
+    const base = maxLabelDoc[0]?.maxLabel || 0;
 
+    // 3) Atomically get next label number
+    const c = await Counter.findOneAndUpdate(
+      { _id: "saleOrderLabel" },
+      [
+        {
+          $set: {
+            seq: {
+              $add: [
+                {
+                  $cond: [
+                    { $or: [{ $not: ["$seq"] }, { $lt: ["$seq", base] }] },
+                    base,
+                    "$seq",
+                  ],
+                },
+                1,
+              ],
+            },
+          },
+        },
+      ],
+      { new: true, upsert: true }
+    ).lean();
+    const nextLabel = String(c.seq); // e.g., "52748"
+
+    // 4) Generate unique 8-char OrderID (hex)
+    let orderId;
+    for (let i = 0; i < 5; i++) {
+      const candidate = crypto.randomBytes(4).toString("hex"); // "47f0b67f"
+      const exists = await SaleOrder.exists({ OrderID: candidate });
+      if (!exists) { orderId = candidate; break; }
+    }
+    if (!orderId)
+      return res.status(500).json({ success: false, message: "Failed to allocate OrderID" });
+
+    // 5) Create the SaleOrder (ONLY)
     const saleOrder = await SaleOrder.create({
-      ClientID: resolvedClientId,     // canonical externalId
-      SalesRep: resolvedSalesRep,     // canonical email
+      ClientID: resolvedClientId,   // externalId (string)
+      SalesRep: resolvedSalesRep,   // email (string)
+
       Discount: body.Discount,
       PaymentMethod: body.PaymentMethod,
       ShippedDate: body.ShippedDate,
@@ -557,11 +892,15 @@ const createSaleOrder = async (req, res) => {
       PaymentAmount: body.PaymentAmount,
       LockPrices: body.LockPrices,
       OrderStatus: body.OrderStatus,
-      OrderID: "15768",          // keep if you send it
-      TimeStamp: Date?.now(),      // keep if you send it
-      Label: "15768"
+      Tracking: body.Tracking,      // keep if you're sending it
+
+      // auto fields
+      OrderID: orderId,                         // 8-char hex, string
+      Label: nextLabel,                         // incremented label, string
+      TimeStamp: body.TimeStamp ?? new Date(),  // keep existing behavior
     });
 
+    // 6) Done — no detail creation here
     return res.status(200).json({
       success: true,
       message: "Sale order created successfully",
@@ -570,7 +909,7 @@ const createSaleOrder = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
-};
+}
 
 /* --------------------------------------- UPDATE ---------------------------------- */
 const updateSaleOrder = async (req, res) => {
@@ -638,6 +977,7 @@ const deleteSaleOrder = async (req, res) => {
 
 module.exports = {
   getSaleOrdersLists,
+  getSaleOrdersByClient,
   getSaleOrdersListById,
   getLatestOrderPerClient,
   createSaleOrder,

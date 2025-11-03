@@ -16,15 +16,14 @@ const PAYMENT_METHODS = [
 
 const SHIPPING_METHODS = [
   "",
-  "PICKUP",
-  "LOCAL_COURIER",
-  "UPS",
-  "FEDEX",
-  "USPS",
-  "DHL",
-  "LTL_FREIGHT",
-  "DELIVERY",
-  "OTHER",
+  "UPS Ground",
+  "UPS 2nd Day Air",
+  "UPS 3 Day Select",
+  "UPS Next Day Air Saver",
+  "USPS Ground Advantage",
+  "Will Call",
+  "Local Delivery",
+  "Freight Via SAIA",
 ];
 
 const saleOrderSchema = new mongoose.Schema(
@@ -90,7 +89,7 @@ const saleOrderSchema = new mongoose.Schema(
       enum: SHIPPING_METHODS,
       default: "",
       trim: true,
-      set: (v) => (v ?? "").toString().trim().toUpperCase(),
+      // set: (v) => (v ?? "").toString().trim().toUpperCase(),
     },
 
     // Tracking: ""

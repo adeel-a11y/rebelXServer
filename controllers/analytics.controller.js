@@ -1,6 +1,7 @@
 const User = require("../models/User.model");
 const Client = require("../models/Client.model");
 const Activity = require("../models/Activity.model");
+const Order = require("../models/SaleOrders");
 
 const overviewAnalytics = async (req, res) => {
   try {
@@ -562,6 +563,56 @@ const contactTypeBreakdown = async (req, res) => {
   }
 };
 
+const getClientOrdersStats = async (req, res) => {
+  try {
+    const { externalId } = req.params;
+    if (!externalId) {
+      return res.status(400).json({ success: false, message: "externalId is required" });
+    }
+
+    // If your model is SaleOrder use that; you wrote Order in your snippet.
+    const statsArr = await Order.aggregate([
+      { $match: { ClientID: externalId } },
+      {
+        $group: {
+          _id: null,
+          totalOrders: { $sum: 1 },
+          completed: {
+            $sum: { $cond: [{ $eq: ["$OrderStatus", "Completed"] }, 1, 0] }
+          },
+          issued: {
+            $sum: { $cond: [{ $eq: ["$OrderStatus", "Issued"] }, 1, 0] }
+          }
+        }
+      },
+      {
+        $addFields: {
+          others: {
+            $subtract: ["$totalOrders", { $add: ["$completed", "$issued"] }]
+          }
+        }
+      },
+      { $project: { _id: 0 } }
+    ]);
+
+    const stats =
+      statsArr[0] || { totalOrders: 0, completed: 0, issued: 0, others: 0 };
+
+    return res.status(200).json({
+      success: true,
+      message: "Client orders stats",
+      data: stats,
+    });
+  } catch (err) {
+    console.error("Error in getClientOrdersStats:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch client orders stats",
+      error: err.message,
+    });
+  }
+};
+
 
 module.exports = {
   overviewAnalytics,
@@ -570,4 +621,5 @@ module.exports = {
   contactStatusBreakdown,
   companyTypeBreakdown,
   contactTypeBreakdown,
+  getClientOrdersStats
 };

@@ -67,6 +67,7 @@ const saleOrderDetailsSchema = new mongoose.Schema(
     // TimeStamp: "5/20/2024 14:01:49"
     TimeStamp: {
       type: Date,
+      default: Date.now()
     },
   },
   {

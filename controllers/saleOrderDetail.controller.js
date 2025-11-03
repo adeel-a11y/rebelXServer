@@ -1,4 +1,5 @@
 const SaleOrderDetail = require("../models/SaleOrderDetails");
+const crypto = require("crypto");
 
 /* --------------------------------------- GET ---------------------------------- */
 const getSaleOrderDetailsLists = async (req, res) => {
@@ -79,6 +80,7 @@ const getSaleOrderDetailById = async (req, res) => {
 const createSaleOrderDetail = async (req, res) => {
   try {
     const {
+      OrderID,
       Warehouse,
       SKU,
       Description,
@@ -88,6 +90,7 @@ const createSaleOrderDetail = async (req, res) => {
       Price,
       Total,
     } = req.body;
+    console.log("data", req.body)
 
     if (!Warehouse || !SKU || !Price || !Total) {
       return res
@@ -95,7 +98,14 @@ const createSaleOrderDetail = async (req, res) => {
         .json({ success: false, message: "These fields are required" });
     }
 
+    const recordId = crypto.randomBytes(4).toString("hex");
+    // const OrderID = uuidv4();
+
+    console.log(req.body, recordId)
+
     const saleOrderDetail = await SaleOrderDetail.create({
+      RecordID: recordId,
+      OrderID,
       Warehouse,
       SKU,
       Description,
@@ -105,6 +115,8 @@ const createSaleOrderDetail = async (req, res) => {
       Price,
       Total,
     });
+
+    console.log("saleOrderDetail", saleOrderDetail)
     return res.status(200).json({
       success: true,
       message: "Sale order detail created successfully",
@@ -130,9 +142,25 @@ const updateSaleOrderDetail = async (req, res) => {
       Total,
     } = req.body;
 
+    console.log("id", id);
+    console.log("payload", req.body);
+
+    if (!id)
+      return res
+        .status(404)
+        .json({ success: false, message: "ID is required" });
+
+    const isExist = await SaleOrderDetail.findById({ _id: id });
+    if (!isExist)
+      return res
+        .status(404)
+        .json({ success: false, message: "Sale order detail not found" });
+
     const saleOrderDetail = await SaleOrderDetail.findByIdAndUpdate(
       { _id: id },
       {
+        RecordID: isExist.RecordID,
+        OrderID: isExist.OrderID,
         Warehouse,
         SKU,
         Description,
@@ -147,9 +175,10 @@ const updateSaleOrderDetail = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Sale order detail updated successfully",
-      data: saleOrder,
+      data: saleOrderDetail,
     });
   } catch (err) {
+    console.log("err", err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };

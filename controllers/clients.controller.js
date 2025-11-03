@@ -188,158 +188,133 @@ const getClientsNames = async (req, res) => {
 
 const getClientsLists = async (req, res) => {
   try {
-    // paging + sorting
-    const pageRaw = parseInt(req.query.page, 10);
-    const limitRaw = parseInt(req.query.limit, 10);
-    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-    const limitReq = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 20;
-    const perPage = Math.min(limitReq, 100);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const perPage = Math.min(parseInt(req.query.limit, 10) || 100, 100);
     const skip = (page - 1) * perPage;
 
-    // keep your user-provided sort as a tie-breaker
-    const sortBy = req.query.sortBy || "createdAt";
-    const sortDir = (req.query.sort || "desc").toLowerCase() === "asc" ? 1 : -1;
-
-    // base query
+    // ---------- build filters ----------
     const where = {};
     const and = [];
-
-    // ---- search (AND over words across fields) ----
     const qRaw = (req.query.q || "").trim();
     if (qRaw) {
-      const words = qRaw.split(/\s+/).map(escapeReg).filter(Boolean);
-      const regexes = words.map((w) => new RegExp(w, "i"));
-      const searchFields = ["name", "email", "phone", "city", "state", "website", "ownedBy", "contactStatus"];
-      and.push(...regexes.map((r) => ({ $or: searchFields.map((f) => ({ [f]: r })) })));
+      const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const words = qRaw.split(/\s+/).filter(Boolean);
+      const regexes = words.map(w => new RegExp(esc(w), "i"));
+      const fields = ["name", "email", "phone", "city", "state", "website", "ownedBy", "contactStatus"];
+      and.push(...regexes.map(r => ({ $or: fields.map(f => ({ [f]: r })) })));
     }
-
-    // ---- filters ----
-    const statusesArr = csvToArray(req.query.statuses);
-    const statesArr   = csvToArray(req.query.states);
-
-    if (statusesArr.length) {
-      const statusRegexes = [];
-      for (const raw of statusesArr) {
-        const s = raw.trim();
-        if (!s) continue;
-        statusRegexes.push(new RegExp(`^${escapeReg(s)}$`, "i"));
-        statusRegexes.push(new RegExp(`\\b${escapeReg(s)}\\b`, "i"));
-      }
-      and.push({ contactStatus: { $in: statusRegexes } });
-    }
-
-    if (statesArr.length) {
-      const expanded = new Set();
-      for (const raw of statesArr) {
-        const s = String(raw || "").trim();
-        if (!s) continue;
-        expanded.add(s);
-        const upper = s.toUpperCase();
-        if (STATE_ABBR[upper]) expanded.add(STATE_ABBR[upper]);
-      }
-      const stateRegexes = [];
-      for (const token of expanded) {
-        const esc = escapeReg(token);
-        stateRegexes.push(new RegExp(`^\\s*${esc}\\s*$`, "i"));
-        stateRegexes.push(new RegExp(`\\b${esc}\\b`, "i"));
-      }
-      and.push({ state: { $in: stateRegexes } });
-    }
-
     if (and.length) where.$and = and;
 
-    // helper to parse the order timestamp inside the lookup
-    const tsAsDate = {
-      $ifNull: [
-        {
-          $dateFromString: {
-            dateString: "$TimeStamp",
-            format: "%m/%d/%Y %H:%M:%S",
-            onError: { $toDate: "$TimeStamp" },
-          },
-        },
-        { $toDate: "$TimeStamp" },
-      ],
-    };
+    // ---------- Step 1: get all matching clients (only ids + createdAt) ----------
+    const base = await Client.find(where, { externalId: 1, createdAt: 1 }).lean();
+    const total = base.length;
+    if (!total) {
+      return res.json({
+        success: true, message: "Clients retrieved successfully",
+        page, perPage, total, totalPages: 1, hasPrev: false, hasNext: false,
+        prevPage: null, nextPage: null, data: []
+      });
+    }
 
-    // ---- query DB ----
-    const [total, clients] = await Promise.all([
-      Client.countDocuments(where),
+    const extIds = base.map(c => c.externalId).filter(Boolean);
+    const createdAtById = new Map(base.map(c => [c.externalId, c.createdAt || null]));
 
-      Client.aggregate([
-        { $match: where },
+    // ---------- Step 2: latest order per client (batched; uses {ClientID:1, ts:-1}) ----------
+    const latestAgg = await SaleOrder.aggregate([
+      { $match: { ClientID: { $in: extIds } } },
 
-        // Join each client's LATEST order (Client.externalId -> Orders.ClientID)
-        {
-          $lookup: {
-            from: SaleOrder.collection.name,            // e.g., "saleorders"
-            let: { extId: "$externalId" },
-            pipeline: [
-              { $match: { $expr: { $eq: ["$ClientID", "$$extId"] } } },
-              { $addFields: { _parsedTime: tsAsDate } },
-              { $sort: { _parsedTime: -1 } },
-              { $limit: 1 },
-              { $project: { _id: 0, lastOrderTime: "$_parsedTime" } },
-            ],
-            as: "latestOrder",
-          },
-        },
-        // Extract fields for sorting
-        {
-          $addFields: {
-            lastOrderTime: { $first: "$latestOrder.lastOrderTime" }, // Date or null
-            hasOrder: { $cond: [{ $gt: [{ $size: "$latestOrder" }, 0] }, 1, 0] },
-          },
-        },
-        { $project: { latestOrder: 0 } },
+      // If you already have a real Date field "ts", you can remove this $addFields block.
+      {
+        $addFields: {
+          tsSafe: {
+            $ifNull: [
+              "$ts",                          // preferred: real Date you store on write
+              { $toDate: "$TimeStamp" }       // fallback: cast string once for matched docs
+            ]
+          }
+        }
+      },
 
-        // Sort: clients with orders first (newest → oldest), then no-order clients
-        { $sort: { hasOrder: -1, lastOrderTime: -1, [sortBy]: sortDir } },
+      // Use the index if you have { ClientID: 1, ts: -1 }. If not, create it.
+      { $sort: { ClientID: 1, tsSafe: -1 } },
+      {
+        $group: {
+          _id: "$ClientID",
+          lastOrderTime: { $first: "$tsSafe" },     // <-- Date, not string
+          lastOrderId: { $first: "$OrderID" },
+          salesRepEmail: { $first: { $toLower: "$SalesRep" } } // adjust if field differs
+        }
+      },
 
-        // Pagination
-        { $skip: skip },
-        { $limit: perPage },
-
-        // join users by email (ownedBy holds email string)
-        {
-          $lookup: {
-            from: "users", // change if actual collection name differs
-            let: { ownedEmail: "$ownedBy" },
-            pipeline: [
-              { $match: { $expr: { $eq: ["$email", "$$ownedEmail"] } } },
-              { $project: { _id: 0, name: 1, email: 1 } },
-            ],
-            as: "ownerDoc",
-          },
-        },
-        // add ownerName, clean up
-        {
-          $addFields: {
-            ownerName: { $ifNull: [{ $first: "$ownerDoc.name" }, "$ownedBy"] },
-          },
-        },
-        { $project: { ownerDoc: 0 } },
-      ]),
+      // Global newest-first among clients WITH orders
+      { $sort: { lastOrderTime: -1 } }
     ]);
 
-    const totalPages = Math.max(Math.ceil(total / perPage), 1);
+    const withOrderIds = latestAgg.map(x => x._id);
+    const withOrderSet = new Set(withOrderIds);
 
-    return res.status(200).json({
+    // ---------- Step 3: append no-order clients by createdAt desc ----------
+    const noOrderIds = extIds.filter(id => !withOrderSet.has(id));
+    noOrderIds.sort((a, b) => {
+      const aT = createdAtById.get(a) ? new Date(createdAtById.get(a)).getTime() : 0;
+      const bT = createdAtById.get(b) ? new Date(createdAtById.get(b)).getTime() : 0;
+      return bT - aT;
+    });
+
+    const orderedIds = withOrderIds.concat(noOrderIds);
+
+    // ---------- Step 4: paginate over ordered IDs ----------
+    const totalPages = Math.max(Math.ceil(total / perPage), 1);
+    const idsPage = orderedIds.slice(skip, skip + perPage);
+
+    // ---------- Step 5: fetch page clients & reps in batch ----------
+    const [clientsPage] = await Promise.all([
+      Client.find({ externalId: { $in: idsPage } }).lean(),
+    ]);
+
+    const latestMap = new Map(latestAgg.map(x => [x._id, x]));
+    const repEmails = [...new Set(
+      latestAgg.filter(x => idsPage.includes(x._id))
+        .map(x => x.salesRepEmail)
+        .filter(Boolean)
+    )];
+
+    const reps = repEmails.length
+      ? await User.find({ email: { $in: repEmails } }, { name: 1, email: 1 }).lean()
+      : [];
+    const repMap = new Map(reps.map(r => [r.email.toLowerCase(), r.name]));
+
+    const byId = new Map(clientsPage.map(c => [c.externalId, c]));
+    const data = idsPage.map(id => {
+      const c = byId.get(id);
+      if (!c) return null;
+      const latest = latestMap.get(id);
+      const salesRepEmail = latest?.salesRepEmail || null;
+      const salesRepName = salesRepEmail ? (repMap.get(salesRepEmail) || salesRepEmail) : null;
+      return {
+        ...c,
+        ownerName: c.ownedBy,                 // you store a NAME here now
+        hasOrder: latest ? 1 : 0,
+        lastOrderId: latest?.lastOrderId || null,
+        lastOrderTime: latest?.lastOrderTime || null,
+        salesRepEmail,
+        salesRepName
+      };
+    }).filter(Boolean); // keeps the correct order
+
+    res.json({
       success: true,
       message: "Clients retrieved successfully",
-      page,
-      perPage,
-      total,
-      totalPages,
+      page, perPage, total, totalPages,
       hasPrev: page > 1,
-      hasNext: page < totalPages,
+      hasNext: page * perPage < total,
       prevPage: page > 1 ? page - 1 : null,
-      nextPage: page < totalPages ? page + 1 : null,
-      data: clients, // unchanged shape, only ordering changed
-      meta: { total, page, perPage },
+      nextPage: page * perPage < total ? page + 1 : null,
+      data
     });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -362,7 +337,7 @@ const getActivitiesByClient = async (req, res) => {
     const { id } = req.params;
 
     console.log("request", req.query);
-    
+
     const escapeRegex = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // pagination params
@@ -391,13 +366,13 @@ const getActivitiesByClient = async (req, res) => {
     // 3) optional search filter across common fields
     const searchMatch = rx
       ? {
-          $or: [
-            { type: rx },
-            { description: rx },
-            { trackingId: rx },
-            { userId: rx },
-          ],
-        }
+        $or: [
+          { type: rx },
+          { description: rx },
+          { trackingId: rx },
+          { userId: rx },
+        ],
+      }
       : {};
 
     // 4) aggregate: counts + page + lookup
