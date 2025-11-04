@@ -35,7 +35,8 @@ const loginAccount = async (req, res) => {
         email: user.email,
         role: user.role || "user",
       },
-      process.env.JWT_SECRET,
+      // process.env.JWT_SECRET,
+      "rebelxadeel",
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
