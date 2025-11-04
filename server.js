@@ -45,6 +45,7 @@ const clientRoutes = require("./routes/clients.route");
 const salesRoutes = require("./routes/sales.route");
 const saleOrderDetailsRoutes = require("./routes/saleOrderDetails.route");
 const overviewRoutes = require("./routes/overview.route");
+const authRoutes = require("./routes/auth.route");
 
 app.get("/", (_req, res) => {
   res.status(200).json({ message: "Welcome Back ReblEx Server" });
@@ -55,6 +56,7 @@ app.use("/api/clients", clientRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api/saleOrderDetails", saleOrderDetailsRoutes);
 app.use("/api/overview", overviewRoutes);
+app.use("/api/auth", authRoutes);
 
 app.listen(PORT, "0.0.0.0", () => {
   setInterval(async () => {

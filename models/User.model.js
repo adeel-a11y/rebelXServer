@@ -31,7 +31,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, "Role is required"],
       enum: {
-        values: ["admin", "manager", "employee","sales-agent", "shipping", "sales", "warehouse", "sales-executive"],
+        values: ["admin", "manager", "employee","sales-agent", "qc", "executive-assistant", "shipping", "sales", "warehouse", "sales-executive"],
         message: "Role must be either admin, manager, or employee",
       },
     },
@@ -43,10 +43,10 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       trim: true,
-      match: [
-        /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/,
-        "Please provide a valid phone number",
-      ],
+      // match: [
+      //   /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/,
+      //   "Please provide a valid phone number",
+      // ],
     },
     hourlyRate: {
       type: String,
