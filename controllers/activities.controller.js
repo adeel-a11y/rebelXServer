@@ -4,6 +4,11 @@ const Activity = require("../models/Activity.model");
 const User = require("../models/User.model"); // <- for collection name
 const Client = require("../models/Client.model"); // <- for collection name
 
+// buckets (case-insensitive match)
+const CALL_TYPES  = ["call", "call_made", "phone", "phone_call"];
+const EMAIL_TYPES = ["email", "email_sent", "mail"];
+const TEXT_TYPES  = ["text", "sms", "message", "im"];
+
 // --- helpers (as-is) ---
 function startOfToday() {
   const d = new Date();
@@ -284,113 +289,63 @@ const getActivitiesLists = async (req, res) => {
 
 const getActivitiesSummary = async (req, res) => {
   try {
-    // ---- optional search (same fields as list) ----
-    const match = {};
-    if (req.query.q) {
-      const rx = new RegExp(req.query.q, "i");
-      match.$or = [
-        { description: rx },
-        { trackingId: rx },
-        { clientId: rx },
-        { userId: rx },
-        { type: rx },
-      ];
+    const externalId = String(req.query.externalId || "").trim();
+
+    const pipeline = [];
+
+    // (0) Client filter (agar chahiye)
+    if (externalId) {
+      pipeline.push({ $match: { clientId: externalId } });
+      // NOTE: agar aapke Activity.clientId me "client name" hota hai,
+      // to yahan pehle Client find karke { clientId: client.name } match karein.
     }
 
-    // ---- build date range (preset or from/to) ----
-    let dateFrom = null,
-      dateTo = null;
-    const preset = req.query.dateRange;
-    if (preset === "today") {
-      dateFrom = startOfToday();
-      dateTo = endOfToday();
-    } else if (preset === "this_month") {
-      dateFrom = startOfMonth();
-      dateTo = endOfMonth();
-    } else if (preset === "this_year") {
-      const y = new Date().getFullYear();
-      dateFrom = startOfYear(y);
-      dateTo = endOfYear(y);
-    } else if (preset === "prev_year") {
-      const y = new Date().getFullYear() - 1;
-      dateFrom = startOfYear(y);
-      dateTo = endOfYear(y);
-    }
-    if (req.query.from) {
-      const f = new Date(req.query.from);
-      if (!isNaN(f)) dateFrom = f;
-    }
-    if (req.query.to) {
-      const t = new Date(req.query.to);
-      if (!isNaN(t)) dateTo = t;
-    }
-    const hasDate = Boolean(dateFrom || dateTo);
+    // 1) normalize type -> lowercase trimmed
+    pipeline.push({
+      $addFields: {
+        _t: { $toLower: { $trim: { input: { $ifNull: ["$type", ""] } } } },
+      },
+    });
 
-    // ---- aggregation: safe date filter + lowercased type buckets ----
-    const pipeline = [
-      { $match: match },
+    // 2) single group with bucketed sums
+    pipeline.push({
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        calls:  { $sum: { $cond: [{ $in: ["$_t", CALL_TYPES]  }, 1, 0] } },
+        emails: { $sum: { $cond: [{ $in: ["$_t", EMAIL_TYPES] }, 1, 0] } },
+        texts:  { $sum: { $cond: [{ $in: ["$_t", TEXT_TYPES]  }, 1, 0] } },
+      },
+    });
 
-      // If date filter present, convert possibly-string createdAt => date and filter
-      ...(hasDate
-        ? [
-            {
-              $addFields: {
-                _createdAtDate: {
-                  $convert: {
-                    input: "$createdAt",
-                    to: "date",
-                    onError: null,
-                    onNull: null,
-                  },
-                },
-              },
-            },
-            {
-              $match: {
-                _createdAtDate: {
-                  ...(dateFrom ? { $gte: dateFrom } : {}),
-                  ...(dateTo ? { $lte: dateTo } : {}),
-                },
-              },
-            },
-          ]
-        : []),
-
-      // Normalize type once
-      { $addFields: { _lt: { $toLower: { $ifNull: ["$type", ""] } } } },
-
-      // Group into counts using set membership
-      {
-        $group: {
-          _id: null,
-          total: { $sum: 1 },
-          totalCalls: {
-            $sum: {
-              $cond: [
-                { $in: ["$_lt", ["call", "call_made", "phone", "phone_call"]] },
-                1,
-                0,
-              ],
-            },
-          },
-          totalEmails: {
-            $sum: {
-              $cond: [{ $in: ["$_lt", ["email", "email_sent"]] }, 1, 0],
-            },
-          },
+    // 3) compute others = total - (calls+emails+texts)
+    pipeline.push({
+      $project: {
+        _id: 0,
+        total: 1,
+        calls: 1,
+        emails: 1,
+        texts: 1,
+        others: {
+          $max: [0, { $subtract: ["$total", { $add: ["$calls", "$emails", "$texts"] }] }],
         },
       },
-      { $project: { _id: 0 } },
-    ];
+    });
 
-    const [doc] = await Activity.aggregate(pipeline, { allowDiskUse: true });
+    const [doc] = await Activity.aggregate(pipeline);
     return res.status(200).json({
-      totalCalls: doc?.totalCalls ?? 0,
-      totalEmails: doc?.totalEmails ?? 0,
-      total: doc?.total ?? 0,
+      success: true,
+      ...{
+        total:  doc?.total  ?? 0,
+        calls:  doc?.calls  ?? 0,
+        emails: doc?.emails ?? 0,
+        texts:  doc?.texts  ?? 0,
+        others: doc?.others ?? 0,
+      },
+      message: "Activities summary retrieved successfully",
     });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -712,9 +667,38 @@ const getActivitiesListById = async (req, res) => {
     const doc = await Activity.findById({ _id: req.params.id }).lean();
     if (!doc)
       return res.status(404).json({ success: false, message: "Not found" });
-    return res.status(200).json({ success: true, message: "Activity retrieved successfully", data: doc });
+
+    const client = await Client.findOne({ externalId: doc.clientId });
+    if (!client)
+      return res
+        .status(404)
+        .json({ success: false, message: "Client not found" });
+
+    doc.clientId = client.name;
+
+    const user = await User.findOne({ email: doc.userId });
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+
+    doc.userId = user.name;
+
+    return res
+      .status(200)
+      .json({
+        success: true,
+        message: "Activity retrieved successfully",
+        data: doc,
+      });
   } catch (error) {
-    return res.status(500).json({ success: false, message: "Internal server error", error: error.message });
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Internal server error",
+        error: error.message,
+      });
   }
 };
 

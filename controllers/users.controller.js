@@ -256,7 +256,32 @@ const getUsersListById = async (req, res) => {
 /* -------------------------- POST ----------------------- */
 const createUserList = async (req, res) => {
   try {
-    const usersList = await User.create(req.body);
+    const { name, email, password, role, phone, hourlyRate } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return res
+        .status(400)
+        .json({ success: false, error: "All fields are required" });
+    }
+
+    const isEmailExist = await User.findOne({ email });
+    if (isEmailExist) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Email already exists" });
+    }
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    const usersList = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      role,
+      department: role,
+      phone,
+      hourlyRate,
+    });
     return res.status(201).json({
       success: true,
       message: "User created successfully",
@@ -270,61 +295,27 @@ const createUserList = async (req, res) => {
 /* -------------------------- PUT ----------------------- */
 const updateUserList = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { password, ...rest } = req.body;
+    const { name, email, password, role, phone, hourlyRate, status } = req.body;
 
-    console.log("password", password);
-    console.log("rest", rest);
-
-    const user = await User.findById(id);
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    // 1) Apply non-password fields
-    Object.assign(user, rest);
-
-    // 2) If password provided, hash it
-    if (password && String(password).trim().length) {
-      const salt = await bcrypt.genSalt(12);
-      user.password = await bcrypt.hash(password, salt);
-    }
-
-    // 3) Save (runs schema validators and any pre/post save hooks)
-    await user.save();
-
-    // 4) Create a fresh token (adjust claims as needed)
-    const token = jwt.sign(
-      {
-        sub: user._id.toString(),
-        email: user.email,
-        role: user.role || "user",
-      },
-      // process.env.JWT_SECRET,
-      "rebelxadeel",
-      { expiresIn: "7d" }
-    );
-
-    // 5) Remove sensitive fields before sending back
-    const safeUser = user.toObject();
-    delete safeUser.password;
-    delete safeUser.__v;
-
-    console.log("safeUser", safeUser);
-    console.log("token", token);
-
-    return res.status(200).json({
+    const usersList = await User.create({
+      name,
+      email,
+      password,
+      role,
+      department: role,
+      phone,
+      hourlyRate,
+      status,
+    });
+    return res.status(201).json({
       success: true,
       message: "User updated successfully",
-      token,
-      data: safeUser // password is not included
+      data: usersList,
     });
   } catch (error) {
-    console.log("error", error);
-    return res.status(500).json({ success: false, error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 };
-
 
 /* -------------------------- DELETE ----------------------- */
 const deleteUserList = async (req, res) => {

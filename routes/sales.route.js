@@ -4,6 +4,7 @@ const {
   getSaleOrdersByClient,
   getSaleOrdersListById,
   getLatestOrderPerClient,
+  getOrdersCountByStatus,
   createSaleOrder,
   updateSaleOrder,
   deleteSaleOrder,
@@ -16,6 +17,7 @@ router.get("/lists", getSaleOrdersLists);
 router.get("/lists/client/:externalId", getSaleOrdersByClient);
 router.get("/lists/:id", getSaleOrdersListById);
 router.get("/latest-order-per-client", getLatestOrderPerClient);
+router.get("/orders-count-by-status", getOrdersCountByStatus);
 
 // POST
 router.post("/", createSaleOrder);

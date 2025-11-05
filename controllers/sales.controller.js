@@ -3,8 +3,8 @@ const SaleOrderDetail = require("../models/SaleOrderDetails");
 const Client = require("../models/Client.model");
 const User = require("../models/User.model");
 const mongoose = require("mongoose");
-const crypto = require('crypto');
-const Counter = require('../models/Counter.model');
+const crypto = require("crypto");
+const Counter = require("../models/Counter.model");
 
 const esc = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -18,13 +18,42 @@ const toNumber = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const VALID = [
+  "PENDING",
+  "CONFIRMED",
+  "PROCESSING",
+  "SHIPPING",
+  "DELIVERED",
+  "COMPLETED",
+  "ISSUED",
+  "PENDING PAYMENT",
+  "CANCELLED",
+  "RETURNED",
+];
+
+const LABELS = {
+  PENDING: "Pending",
+  CONFIRMED: "Confirmed",
+  PROCESSING: "Processing",
+  SHIPPING: "Shipping",
+  DELIVERED: "Delivered",
+  COMPLETED: "Completed",
+  ISSUED: "Issued",
+  "PENDING PAYMENT": "Pending Payment",
+  CANCELLED: "Cancelled",
+  RETURNED: "Returned",
+};
+
 /** Resolve Client: name OR externalId -> externalId (canonical) */
 async function resolveClientExternalId(input) {
   const token = normalize(input);
   if (!token) return null;
 
   // if it already looks like an externalId and exists, return as-is
-  let found = await Client.findOne({ externalId: token }, { _id: 0, externalId: 1 }).lean();
+  let found = await Client.findOne(
+    { externalId: token },
+    { _id: 0, externalId: 1 }
+  ).lean();
   if (found?.externalId) return found.externalId;
 
   // else try exact name (case-insensitive)
@@ -68,19 +97,26 @@ function midnightRangeForPreset(preset) {
   switch ((preset || "").toLowerCase()) {
     case "today":
       start.setUTCHours(0, 0, 0, 0);
-      end.setUTCDate(d + 1); end.setUTCHours(0, 0, 0, 0);
+      end.setUTCDate(d + 1);
+      end.setUTCHours(0, 0, 0, 0);
       return { start, end };
     case "this_month":
-      start.setUTCFullYear(y, m, 1); start.setUTCHours(0, 0, 0, 0);
-      end.setUTCFullYear(y, m + 1, 1); end.setUTCHours(0, 0, 0, 0);
+      start.setUTCFullYear(y, m, 1);
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCFullYear(y, m + 1, 1);
+      end.setUTCHours(0, 0, 0, 0);
       return { start, end };
     case "this_year":
-      start.setUTCFullYear(y, 0, 1); start.setUTCHours(0, 0, 0, 0);
-      end.setUTCFullYear(y + 1, 0, 1); end.setUTCHours(0, 0, 0, 0);
+      start.setUTCFullYear(y, 0, 1);
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCFullYear(y + 1, 0, 1);
+      end.setUTCHours(0, 0, 0, 0);
       return { start, end };
     case "prev_year":
-      start.setUTCFullYear(y - 1, 0, 1); start.setUTCHours(0, 0, 0, 0);
-      end.setUTCFullYear(y, 0, 1); end.setUTCHours(0, 0, 0, 0);
+      start.setUTCFullYear(y - 1, 0, 1);
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCFullYear(y, 0, 1);
+      end.setUTCHours(0, 0, 0, 0);
       return { start, end };
     default:
       return null;
@@ -122,9 +158,11 @@ const getSaleOrdersLists = async (req, res) => {
     // DATE (prefer TimeStampDate, fallback to parsing TimeStamp)
     let range = null;
     if (fromRaw && !isNaN(fromRaw)) {
-      const start = new Date(fromRaw); start.setUTCHours(0, 0, 0, 0);
+      const start = new Date(fromRaw);
+      start.setUTCHours(0, 0, 0, 0);
       const end = toRaw && !isNaN(toRaw) ? new Date(toRaw) : new Date(fromRaw);
-      end.setUTCDate(end.getUTCDate() + 1); end.setUTCHours(0, 0, 0, 0);
+      end.setUTCDate(end.getUTCDate() + 1);
+      end.setUTCHours(0, 0, 0, 0);
       range = { start, end };
     } else if (datePreset) {
       range = midnightRangeForPreset(datePreset);
@@ -203,7 +241,9 @@ const getSaleOrdersLists = async (req, res) => {
         { _id: 0, externalId: 1 }
       ).lean();
       const clientIds = [
-        ...new Set(matchedClients.map((c) => (c.externalId || "").trim()).filter(Boolean)),
+        ...new Set(
+          matchedClients.map((c) => (c.externalId || "").trim()).filter(Boolean)
+        ),
       ];
       if (clientIds.length) {
         orDirect.push({ ClientID: { $in: clientIds } });
@@ -215,7 +255,11 @@ const getSaleOrdersLists = async (req, res) => {
         { _id: 0, email: 1 }
       ).lean();
       const repEmails = [
-        ...new Set(matchedUsers.map((u) => (u.email || "").toLowerCase().trim()).filter(Boolean)),
+        ...new Set(
+          matchedUsers
+            .map((u) => (u.email || "").toLowerCase().trim())
+            .filter(Boolean)
+        ),
       ];
       if (repEmails.length) {
         orDirect.push({ SalesRep: { $in: repEmails } });
@@ -257,9 +301,15 @@ const getSaleOrdersLists = async (req, res) => {
         .lean(),
     ]);
 
-    const itemsTotal = await SaleOrderDetail.find({ OrderID: projection.OrderID }).select("Total").lean();
+    const itemsTotal = await SaleOrderDetail.find({
+      OrderID: projection.OrderID,
+    })
+      .select("Total")
+      .lean();
 
-    const orderIds = [...new Set(saleOrdersPage.map(o => o.OrderID).filter(Boolean))];
+    const orderIds = [
+      ...new Set(saleOrdersPage.map((o) => o.OrderID).filter(Boolean)),
+    ];
 
     // ---- Load details for these orders in ONE query ----
     let details = [];
@@ -274,7 +324,7 @@ const getSaleOrdersLists = async (req, res) => {
     for (const d of details) {
       // Row total: prefer detail.Total; fallback = qty * price
       const rowTotal =
-        toNumber(d.Total) || (toNumber(d.QtyShipped) * toNumber(d.Price));
+        toNumber(d.Total) || toNumber(d.QtyShipped) * toNumber(d.Price);
 
       const prev = subtotalByOrderId.get(d.OrderID) || 0;
       subtotalByOrderId.set(d.OrderID, prev + rowTotal);
@@ -282,23 +332,39 @@ const getSaleOrdersLists = async (req, res) => {
 
     // ---- page-scoped name resolution ----
     const clientKeys = [
-      ...new Set(saleOrdersPage.map((o) => (o.ClientID || "").trim()).filter(Boolean)),
+      ...new Set(
+        saleOrdersPage.map((o) => (o.ClientID || "").trim()).filter(Boolean)
+      ),
     ];
     const repKeys = [
-      ...new Set(saleOrdersPage.map((o) => (o.SalesRep || "").toLowerCase().trim()).filter(Boolean)),
+      ...new Set(
+        saleOrdersPage
+          .map((o) => (o.SalesRep || "").toLowerCase().trim())
+          .filter(Boolean)
+      ),
     ];
 
     const [clients, users] = await Promise.all([
       clientKeys.length
-        ? Client.find({ externalId: { $in: clientKeys } }, { _id: 0, externalId: 1, name: 1 }).lean()
+        ? Client.find(
+            { externalId: { $in: clientKeys } },
+            { _id: 0, externalId: 1, name: 1 }
+          ).lean()
         : [],
       repKeys.length
-        ? User.find({ email: { $in: repKeys } }, { _id: 0, email: 1, name: 1 }).lean()
+        ? User.find(
+            { email: { $in: repKeys } },
+            { _id: 0, email: 1, name: 1 }
+          ).lean()
         : [],
     ]);
 
-    const nameByExternalId = new Map(clients.map((c) => [c.externalId, c.name]));
-    const nameByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u.name]));
+    const nameByExternalId = new Map(
+      clients.map((c) => [c.externalId, c.name])
+    );
+    const nameByEmail = new Map(
+      users.map((u) => [u.email.toLowerCase(), u.name])
+    );
 
     const data = saleOrdersPage.map((o) => {
       const itemsSubtotal = subtotalByOrderId.get(o.OrderID) ?? 0;
@@ -306,15 +372,19 @@ const getSaleOrdersLists = async (req, res) => {
       const tax = toNumber(o.Tax);
       const discount = toNumber(o.Discount);
 
-      const total = itemsSubtotal;                          // items ka sum
+      const total = itemsSubtotal; // items ka sum
       const grand = itemsSubtotal + shipping + tax - discount; // requested formula
 
       return {
         _id: o._id,
         Label: o.Label,
         OrderID: o.OrderID,
-        ClientID: nameByExternalId.get((o.ClientID || "").trim()) || o.ClientID || null,
-        SalesRep: nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) || o.SalesRep || null,
+        ClientID:
+          nameByExternalId.get((o.ClientID || "").trim()) || o.ClientID || null,
+        SalesRep:
+          nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) ||
+          o.SalesRep ||
+          null,
         TimeStamp: o.TimeStamp || null,
         City: o.City || null,
         State: o.State || null,
@@ -359,9 +429,12 @@ async function getSaleOrdersByClient(req, res) {
     const skip = (page - 1) * PAGE_SIZE;
 
     // ---- required filter from route param ----
-    const externalId = String(req.params.externalId || '').trim();
+    const externalId = String(req.params.externalId || "").trim();
     if (!externalId) {
-      return res.status(400).json({ success: false, message: "externalId (Client externalId) is required" });
+      return res.status(400).json({
+        success: false,
+        message: "externalId (Client externalId) is required",
+      });
     }
 
     // ---- optional params (same as list) ----
@@ -388,9 +461,11 @@ async function getSaleOrdersByClient(req, res) {
     // DATE
     let range = null;
     if (fromRaw && !isNaN(fromRaw)) {
-      const start = new Date(fromRaw); start.setUTCHours(0, 0, 0, 0);
+      const start = new Date(fromRaw);
+      start.setUTCHours(0, 0, 0, 0);
       const end = toRaw && !isNaN(toRaw) ? new Date(toRaw) : new Date(fromRaw);
-      end.setUTCDate(end.getUTCDate() + 1); end.setUTCHours(0, 0, 0, 0);
+      end.setUTCDate(end.getUTCDate() + 1);
+      end.setUTCHours(0, 0, 0, 0);
       range = { start, end };
     } else if (datePreset) {
       range = midnightRangeForPreset(datePreset);
@@ -454,7 +529,7 @@ async function getSaleOrdersByClient(req, res) {
           { City: rx },
           { State: rx },
           { OrderStatus: rx },
-          { SalesRep: rx }
+          { SalesRep: rx },
           // SalesRep name/email
           // (email direct match; name -> map to emails first if you want, or skip to keep this lighter)
         ],
@@ -465,9 +540,21 @@ async function getSaleOrdersByClient(req, res) {
 
     // ---- projection ----
     const projection = {
-      _id: 1, Label: 1, OrderID: 1, ClientID: 1, SalesRep: 1,
-      TimeStamp: 1, City: 1, State: 1, LockPrices: 1, OrderStatus: 1,
-      TimeStampDate: 1, createdAt: 1, Discount: 1, Tax: 1, ShippingCost: 1
+      _id: 1,
+      Label: 1,
+      OrderID: 1,
+      ClientID: 1,
+      SalesRep: 1,
+      TimeStamp: 1,
+      City: 1,
+      State: 1,
+      LockPrices: 1,
+      OrderStatus: 1,
+      TimeStampDate: 1,
+      createdAt: 1,
+      Discount: 1,
+      Tax: 1,
+      ShippingCost: 1,
     };
 
     // ---- query ----
@@ -481,7 +568,9 @@ async function getSaleOrdersByClient(req, res) {
     ]);
 
     // ---- detail rows for ONLY these orders ----
-    const orderIds = [...new Set(saleOrdersPage.map(o => o.OrderID).filter(Boolean))];
+    const orderIds = [
+      ...new Set(saleOrdersPage.map((o) => o.OrderID).filter(Boolean)),
+    ];
 
     let details = [];
     if (orderIds.length) {
@@ -495,18 +584,30 @@ async function getSaleOrdersByClient(req, res) {
     const subtotalByOrderId = new Map();
     for (const d of details) {
       const rowTotal =
-        toNumber(d.Total) || (toNumber(d.QtyShipped) * toNumber(d.Price));
-      subtotalByOrderId.set(d.OrderID, (subtotalByOrderId.get(d.OrderID) || 0) + rowTotal);
+        toNumber(d.Total) || toNumber(d.QtyShipped) * toNumber(d.Price);
+      subtotalByOrderId.set(
+        d.OrderID,
+        (subtotalByOrderId.get(d.OrderID) || 0) + rowTotal
+      );
     }
 
     // ---- join names (client + rep) ----
     const repKeys = [
-      ...new Set(saleOrdersPage.map((o) => (o.SalesRep || "").toLowerCase().trim()).filter(Boolean)),
+      ...new Set(
+        saleOrdersPage
+          .map((o) => (o.SalesRep || "").toLowerCase().trim())
+          .filter(Boolean)
+      ),
     ];
     const users = repKeys.length
-      ? await User.find({ email: { $in: repKeys } }, { _id: 0, email: 1, name: 1 }).lean()
+      ? await User.find(
+          { email: { $in: repKeys } },
+          { _id: 0, email: 1, name: 1 }
+        ).lean()
       : [];
-    const nameByEmail = new Map(users.map((u) => [u.email.toLowerCase(), u.name]));
+    const nameByEmail = new Map(
+      users.map((u) => [u.email.toLowerCase(), u.name])
+    );
 
     // Optional: fetch client name once (we already know externalId)
     const clientDoc = await Client.findOne(
@@ -530,7 +631,10 @@ async function getSaleOrdersByClient(req, res) {
         Label: o.Label,
         OrderID: o.OrderID,
         Client: clientName, // human name
-        SalesRep: nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) || o.SalesRep || null,
+        SalesRep:
+          nameByEmail.get((o.SalesRep || "").toLowerCase().trim()) ||
+          o.SalesRep ||
+          null,
         TimeStamp: o.TimeStamp || null,
         City: o.City || null,
         State: o.State || null,
@@ -570,7 +674,9 @@ const getSaleOrdersListById = async (req, res) => {
     const { id } = req.params;
 
     if (!mongoose.isValidObjectId(id)) {
-      return res.status(400).json({ success: false, message: "Invalid order id" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid order id" });
     }
 
     // ---- Aggregation: 1) pick order by _id  2) join details by OrderID  3) resolve client/user names
@@ -648,8 +754,8 @@ const getSaleOrdersListById = async (req, res) => {
       _id: order._id,
       OrderID: order.OrderID,
       Label: order.Label,
-      ClientID: order.ClientID,     // resolved to name if available
-      SalesRep: order.SalesRep,     // resolved to name if available
+      ClientID: order.ClientID, // resolved to name if available
+      SalesRep: order.SalesRep, // resolved to name if available
 
       // Order fields (no duplicate Tracking)
       Tracking: order.Tracking || "",
@@ -806,6 +912,69 @@ async function getLatestOrderPerClient(req, res) {
   });
 }
 
+const getOrdersCountByStatus = async (req, res) => {
+  try {
+    const externalId = String(req.query.externalId || "").trim();
+
+    const pipeline = [];
+
+    // (0) client filter — only when externalId provided (PERF: sab se pehle)
+    if (externalId) {
+      pipeline.push({ $match: { ClientID: externalId } });
+    }
+
+    // 1) normalize status into _statusNorm
+    pipeline.push({
+      $addFields: {
+        _statusNorm: { $toUpper: { $trim: { input: "$OrderStatus" } } },
+      },
+    });
+
+    // 2) keep only valid statuses for counting
+    pipeline.push({ $match: { _statusNorm: { $in: VALID } } });
+
+    // 3) count per normalized status
+    pipeline.push({ $group: { _id: "$_statusNorm", count: { $sum: 1 } } });
+
+    // 4) convert to { COMPLETED: 10, ... }
+    pipeline.push(
+      { $project: { _id: 0, k: "$_id", v: "$count" } },
+      { $group: { _id: null, countsArr: { $push: "$$ROOT" } } },
+      { $project: { _id: 0, countsObj: { $arrayToObject: "$countsArr" } } }
+    );
+
+    // 5) iterate all statuses (even missing)
+    pipeline.push({ $set: { all: VALID } }, { $unwind: "$all" });
+
+    // 6) final rows (missing -> 0) + pretty label
+    pipeline.push({
+      $project: {
+        _id: 0,
+        OrderStatus: {
+          $ifNull: [{ $getField: { field: "$all", input: LABELS } }, "Unknown"],
+        },
+        count: {
+          $ifNull: [{ $getField: { field: "$all", input: "$countsObj" } }, 0],
+        },
+      },
+    });
+
+    // 7) sort
+    pipeline.push({ $sort: { count: -1, OrderStatus: 1 } });
+
+    // single aggregate call
+    const data = await SaleOrder.aggregate(pipeline);
+
+    res.status(200).json({
+      success: true,
+      data,
+      message: "Orders count by status retrieved successfully",
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 /* --------------------------------------- CREATE (Order only) ---------------------------------- */
 async function createSaleOrder(req, res) {
   try {
@@ -815,9 +984,15 @@ async function createSaleOrder(req, res) {
     const resolvedClientId = await resolveClientExternalId(body.ClientID);
     const resolvedSalesRep = await resolveUserEmail(body.SalesRep);
     if (!resolvedClientId)
-      return res.status(400).json({ success: false, message: "Client not found (by name or externalId)" });
+      return res.status(400).json({
+        success: false,
+        message: "Client not found (by name or externalId)",
+      });
     if (!resolvedSalesRep)
-      return res.status(400).json({ success: false, message: "Sales rep not found (by name or email)" });
+      return res.status(400).json({
+        success: false,
+        message: "Sales rep not found (by name or email)",
+      });
 
     const required = [
       resolvedClientId,
@@ -828,7 +1003,9 @@ async function createSaleOrder(req, res) {
       body.OrderStatus,
     ];
     if (required.some((x) => !normalize(x)))
-      return res.status(400).json({ success: false, message: "Missing required fields" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required fields" });
 
     // 2) Compute base for label auto-increment
     const maxLabelDoc = await SaleOrder.aggregate([
@@ -868,15 +1045,20 @@ async function createSaleOrder(req, res) {
     for (let i = 0; i < 5; i++) {
       const candidate = crypto.randomBytes(4).toString("hex"); // "47f0b67f"
       const exists = await SaleOrder.exists({ OrderID: candidate });
-      if (!exists) { orderId = candidate; break; }
+      if (!exists) {
+        orderId = candidate;
+        break;
+      }
     }
     if (!orderId)
-      return res.status(500).json({ success: false, message: "Failed to allocate OrderID" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to allocate OrderID" });
 
     // 5) Create the SaleOrder (ONLY)
     const saleOrder = await SaleOrder.create({
-      ClientID: resolvedClientId,   // externalId (string)
-      SalesRep: resolvedSalesRep,   // email (string)
+      ClientID: resolvedClientId, // externalId (string)
+      SalesRep: resolvedSalesRep, // email (string)
 
       Discount: body.Discount,
       PaymentMethod: body.PaymentMethod,
@@ -892,12 +1074,12 @@ async function createSaleOrder(req, res) {
       PaymentAmount: body.PaymentAmount,
       LockPrices: body.LockPrices,
       OrderStatus: body.OrderStatus,
-      Tracking: body.Tracking,      // keep if you're sending it
+      Tracking: body.Tracking, // keep if you're sending it
 
       // auto fields
-      OrderID: orderId,                         // 8-char hex, string
-      Label: nextLabel,                         // incremented label, string
-      TimeStamp: body.TimeStamp ?? new Date(),  // keep existing behavior
+      OrderID: orderId, // 8-char hex, string
+      Label: nextLabel, // incremented label, string
+      TimeStamp: body.TimeStamp ?? new Date(), // keep existing behavior
     });
 
     // 6) Done — no detail creation here
@@ -918,14 +1100,16 @@ const updateSaleOrder = async (req, res) => {
     const body = req.body || {};
     console.log(body);
 
-
     const update = { ...body };
 
     // If caller sent ClientID (name or externalId), resolve to externalId
     if (body.ClientID !== undefined) {
       const resolvedClientId = await resolveClientExternalId(body.ClientID);
       if (!resolvedClientId)
-        return res.status(400).json({ success: false, message: "Client not found (by name or externalId)" });
+        return res.status(400).json({
+          success: false,
+          message: "Client not found (by name or externalId)",
+        });
       update.ClientID = resolvedClientId;
     }
 
@@ -933,15 +1117,16 @@ const updateSaleOrder = async (req, res) => {
     if (body.SalesRep !== undefined) {
       const resolvedSalesRep = await resolveUserEmail(body.SalesRep);
       if (!resolvedSalesRep)
-        return res.status(400).json({ success: false, message: "Sales rep not found (by name or email)" });
+        return res.status(400).json({
+          success: false,
+          message: "Sales rep not found (by name or email)",
+        });
       update.SalesRep = resolvedSalesRep;
     }
 
-    const saleOrder = await SaleOrder.findByIdAndUpdate(
-      { _id: id },
-      update,
-      { new: true }
-    );
+    const saleOrder = await SaleOrder.findByIdAndUpdate({ _id: id }, update, {
+      new: true,
+    });
 
     return res.status(200).json({
       success: true,
@@ -980,6 +1165,7 @@ module.exports = {
   getSaleOrdersByClient,
   getSaleOrdersListById,
   getLatestOrderPerClient,
+  getOrdersCountByStatus,
   createSaleOrder,
   updateSaleOrder,
   deleteSaleOrder,
