@@ -709,7 +709,7 @@ const getSaleOrdersListById = async (req, res) => {
       // Resolve user name
       {
         $lookup: {
-          from: "users", // <- your users collection name (check actual)
+          from: "usersdb", // <- your users collection name (check actual)
           let: { email: { $toLower: { $ifNull: ["$SalesRep", ""] } } },
           pipeline: [
             { $match: { $expr: { $eq: [{ $toLower: "$email" }, "$$email"] } } },
