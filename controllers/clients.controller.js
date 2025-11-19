@@ -3,6 +3,7 @@ const Client = require("../models/Client.model");
 const User = require("../models/User.model");
 const SaleOrder = require("../models/SaleOrders");
 const Activity = require("../models/Activity.model");
+const crypto = require("crypto");
 
 /* --------------------------------- helpers -------------------------------- */
 const CONTACT_STATUSES = [
@@ -17,6 +18,21 @@ const CONTACT_STATUSES = [
 ];
 
 const escapeReg = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+async function generateExternalId() {
+  const MAX_TRIES = 5;
+
+  for (let i = 0; i < MAX_TRIES; i++) {
+    // Example format: 7-char alphanumeric, like "6EEZ046"
+    const raw = crypto.randomBytes(4).toString("hex").toUpperCase(); // e.g. "A3F7C9D1"
+    const candidate = raw.slice(0, 7); // "A3F7C9D"
+
+    const exists = await Client.exists({ externalId: candidate });
+    if (!exists) return candidate;
+  }
+
+  throw new Error("Could not generate unique externalId");
+}
 
 /* ----------------------------- GET: /lists/summary ------------------------ */
 const getClientsSummary = async (req, res) => {
@@ -137,27 +153,51 @@ const getClientsLists = async (req, res) => {
     const and = [];
     const qRaw = (req.query.q || "").trim();
     if (qRaw) {
-      const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const words = qRaw.split(/\s+/).filter(Boolean);
-      const regexes = words.map(w => new RegExp(esc(w), "i"));
-      const fields = ["name", "email", "phone", "city", "state", "website", "ownedBy", "contactStatus"];
-      and.push(...regexes.map(r => ({ $or: fields.map(f => ({ [f]: r })) })));
+      const regexes = words.map((w) => new RegExp(esc(w), "i"));
+      const fields = [
+        "name",
+        "email",
+        "phone",
+        "city",
+        "state",
+        "website",
+        "ownedBy",
+        "contactStatus",
+      ];
+      and.push(
+        ...regexes.map((r) => ({ $or: fields.map((f) => ({ [f]: r })) }))
+      );
     }
     if (and.length) where.$and = and;
 
     // ---------- Step 1: get all matching clients (only ids + createdAt) ----------
-    const base = await Client.find(where, { externalId: 1, createdAt: 1 }).lean();
+    const base = await Client.find(where, {
+      externalId: 1,
+      createdAt: 1,
+    }).lean();
     const total = base.length;
     if (!total) {
       return res.json({
-        success: true, message: "Clients retrieved successfully",
-        page, perPage, total, totalPages: 1, hasPrev: false, hasNext: false,
-        prevPage: null, nextPage: null, data: []
+        success: true,
+        message: "Clients retrieved successfully",
+        page,
+        perPage,
+        total,
+        totalPages: 1,
+        hasPrev: false,
+        hasNext: false,
+        prevPage: null,
+        nextPage: null,
+        data: [],
       });
     }
 
-    const extIds = base.map(c => c.externalId).filter(Boolean);
-    const createdAtById = new Map(base.map(c => [c.externalId, c.createdAt || null]));
+    const extIds = base.map((c) => c.externalId).filter(Boolean);
+    const createdAtById = new Map(
+      base.map((c) => [c.externalId, c.createdAt || null])
+    );
 
     // ---------- Step 2: latest order per client (batched; uses {ClientID:1, ts:-1}) ----------
     const latestAgg = await SaleOrder.aggregate([
@@ -168,11 +208,11 @@ const getClientsLists = async (req, res) => {
         $addFields: {
           tsSafe: {
             $ifNull: [
-              "$ts",                          // preferred: real Date you store on write
-              { $toDate: "$TimeStamp" }       // fallback: cast string once for matched docs
-            ]
-          }
-        }
+              "$ts", // preferred: real Date you store on write
+              { $toDate: "$TimeStamp" }, // fallback: cast string once for matched docs
+            ],
+          },
+        },
       },
 
       // Use the index if you have { ClientID: 1, ts: -1 }. If not, create it.
@@ -180,24 +220,28 @@ const getClientsLists = async (req, res) => {
       {
         $group: {
           _id: "$ClientID",
-          lastOrderTime: { $first: "$tsSafe" },     // <-- Date, not string
+          lastOrderTime: { $first: "$tsSafe" }, // <-- Date, not string
           lastOrderId: { $first: "$OrderID" },
-          salesRepEmail: { $first: { $toLower: "$SalesRep" } } // adjust if field differs
-        }
+          salesRepEmail: { $first: { $toLower: "$SalesRep" } }, // adjust if field differs
+        },
       },
 
       // Global newest-first among clients WITH orders
-      { $sort: { lastOrderTime: -1 } }
+      { $sort: { lastOrderTime: -1 } },
     ]);
 
-    const withOrderIds = latestAgg.map(x => x._id);
+    const withOrderIds = latestAgg.map((x) => x._id);
     const withOrderSet = new Set(withOrderIds);
 
     // ---------- Step 3: append no-order clients by createdAt desc ----------
-    const noOrderIds = extIds.filter(id => !withOrderSet.has(id));
+    const noOrderIds = extIds.filter((id) => !withOrderSet.has(id));
     noOrderIds.sort((a, b) => {
-      const aT = createdAtById.get(a) ? new Date(createdAtById.get(a)).getTime() : 0;
-      const bT = createdAtById.get(b) ? new Date(createdAtById.get(b)).getTime() : 0;
+      const aT = createdAtById.get(a)
+        ? new Date(createdAtById.get(a)).getTime()
+        : 0;
+      const bT = createdAtById.get(b)
+        ? new Date(createdAtById.get(b)).getTime()
+        : 0;
       return bT - aT;
     });
 
@@ -212,47 +256,59 @@ const getClientsLists = async (req, res) => {
       Client.find({ externalId: { $in: idsPage } }).lean(),
     ]);
 
-    const latestMap = new Map(latestAgg.map(x => [x._id, x]));
-    const repEmails = [...new Set(
-      latestAgg.filter(x => idsPage.includes(x._id))
-        .map(x => x.salesRepEmail)
-        .filter(Boolean)
-    )];
+    const latestMap = new Map(latestAgg.map((x) => [x._id, x]));
+    const repEmails = [
+      ...new Set(
+        latestAgg
+          .filter((x) => idsPage.includes(x._id))
+          .map((x) => x.salesRepEmail)
+          .filter(Boolean)
+      ),
+    ];
 
     const reps = repEmails.length
-      ? await User.find({ email: { $in: repEmails } }, { name: 1, email: 1 }).lean()
+      ? await User.find(
+          { email: { $in: repEmails } },
+          { name: 1, email: 1 }
+        ).lean()
       : [];
-    const repMap = new Map(reps.map(r => [r.email.toLowerCase(), r.name]));
+    const repMap = new Map(reps.map((r) => [r.email.toLowerCase(), r.name]));
 
-    const byId = new Map(clientsPage.map(c => [c.externalId, c]));
-    const data = idsPage.map(id => {
-      const c = byId.get(id);
-      if (!c) return null;
-      const latest = latestMap.get(id);
-      const salesRepEmail = latest?.salesRepEmail || null;
-      const salesRepName = salesRepEmail ? (repMap.get(salesRepEmail) || salesRepEmail) : null;
-      return {
-        ...c,
-        ownerName: c.ownedBy,                 // you store a NAME here now
-        hasOrder: latest ? 1 : 0,
-        lastOrderId: latest?.lastOrderId || null,
-        lastOrderTime: latest?.lastOrderTime || null,
-        salesRepEmail,
-        salesRepName
-      };
-    }).filter(Boolean); // keeps the correct order
+    const byId = new Map(clientsPage.map((c) => [c.externalId, c]));
+    const data = idsPage
+      .map((id) => {
+        const c = byId.get(id);
+        if (!c) return null;
+        const latest = latestMap.get(id);
+        const salesRepEmail = latest?.salesRepEmail || null;
+        const salesRepName = salesRepEmail
+          ? repMap.get(salesRepEmail) || salesRepEmail
+          : null;
+        return {
+          ...c,
+          ownerName: c.ownedBy, // you store a NAME here now
+          hasOrder: latest ? 1 : 0,
+          lastOrderId: latest?.lastOrderId || null,
+          lastOrderTime: latest?.lastOrderTime || null,
+          salesRepEmail,
+          salesRepName,
+        };
+      })
+      .filter(Boolean); // keeps the correct order
 
     res.json({
       success: true,
       message: "Clients retrieved successfully",
-      page, perPage, total, totalPages,
+      page,
+      perPage,
+      total,
+      totalPages,
       hasPrev: page > 1,
       hasNext: page * perPage < total,
       prevPage: page > 1 ? page - 1 : null,
       nextPage: page * perPage < total ? page + 1 : null,
-      data
+      data,
     });
-
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -306,13 +362,13 @@ const getActivitiesByClient = async (req, res) => {
     // 3) optional search filter across common fields
     const searchMatch = rx
       ? {
-        $or: [
-          { type: rx },
-          { description: rx },
-          { trackingId: rx },
-          { userId: rx },
-        ],
-      }
+          $or: [
+            { type: rx },
+            { description: rx },
+            { trackingId: rx },
+            { userId: rx },
+          ],
+        }
       : {};
 
     // 4) aggregate: counts + page + lookup
@@ -445,14 +501,27 @@ const getActivitiesByClient = async (req, res) => {
 
 const createClientList = async (req, res) => {
   try {
-    const clientsList = await Client.create(req.body);
+    // agar frontend se externalId nahin aaya to backend generate karega
+    const externalId = await generateExternalId();
+
+    const payload = {
+      ...req.body,        // form ke saare fields
+      externalId,         // force externalId from backend
+    };
+
+    const client = await Client.create(payload);
+
     return res.status(201).json({
-      data: clientsList,
-      message: "Successfully Added New Client",
       success: true,
+      message: "Successfully Added New Client",
+      data: client,
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error("createClientList error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -481,7 +550,10 @@ const updateClientList = async (req, res) => {
       if (!user) {
         return res
           .status(400)
-          .json({ success: false, message: `No user found with name "${trimmed}"` });
+          .json({
+            success: false,
+            message: `No user found with name "${trimmed}"`,
+          });
       }
 
       // Sync ownedBy email to the matched user's email

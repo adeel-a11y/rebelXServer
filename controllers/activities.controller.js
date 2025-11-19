@@ -5,9 +5,9 @@ const User = require("../models/User.model"); // <- for collection name
 const Client = require("../models/Client.model"); // <- for collection name
 
 // buckets (case-insensitive match)
-const CALL_TYPES  = ["call", "call_made", "phone", "phone_call"];
+const CALL_TYPES = ["call", "call_made", "phone", "phone_call"];
 const EMAIL_TYPES = ["email", "email_sent", "mail"];
-const TEXT_TYPES  = ["text", "sms", "message", "im"];
+const TEXT_TYPES = ["text", "sms", "message", "im"];
 
 // --- helpers (as-is) ---
 function startOfToday() {
@@ -64,6 +64,8 @@ const getActivitiesLists = async (req, res) => {
         { type: rx },
       ];
     }
+
+    console.log("req.query.type", req.query.type);
     if (req.query.type) {
       const rawTypes = String(req.query.type)
         .split(",")
@@ -82,8 +84,13 @@ const getActivitiesLists = async (req, res) => {
           inList.push(/^phone(_call)?$/i);
         } else if (k === "email" || k === "email_sent") {
           inList.push(/^email(_sent)?$/i);
+        } else if (k === "texts") {
+          inList.push(/^text$/i);
         } else {
-          inList.push(new RegExp("^" + escapeRegExp(t) + "$", "i"));
+          inList.push(/^created$/i);
+          inList.push(/^status(_changed)$/i);
+          inList.push(/^note(_added)$/i);
+          inList.push(/^meeting(_scheduled)$/i);
         }
       }
       if (inList.length) baseMatch.type = { $in: inList };
@@ -312,9 +319,9 @@ const getActivitiesSummary = async (req, res) => {
       $group: {
         _id: null,
         total: { $sum: 1 },
-        calls:  { $sum: { $cond: [{ $in: ["$_t", CALL_TYPES]  }, 1, 0] } },
+        calls: { $sum: { $cond: [{ $in: ["$_t", CALL_TYPES] }, 1, 0] } },
         emails: { $sum: { $cond: [{ $in: ["$_t", EMAIL_TYPES] }, 1, 0] } },
-        texts:  { $sum: { $cond: [{ $in: ["$_t", TEXT_TYPES]  }, 1, 0] } },
+        texts: { $sum: { $cond: [{ $in: ["$_t", TEXT_TYPES] }, 1, 0] } },
       },
     });
 
@@ -327,7 +334,12 @@ const getActivitiesSummary = async (req, res) => {
         emails: 1,
         texts: 1,
         others: {
-          $max: [0, { $subtract: ["$total", { $add: ["$calls", "$emails", "$texts"] }] }],
+          $max: [
+            0,
+            {
+              $subtract: ["$total", { $add: ["$calls", "$emails", "$texts"] }],
+            },
+          ],
         },
       },
     });
@@ -336,10 +348,10 @@ const getActivitiesSummary = async (req, res) => {
     return res.status(200).json({
       success: true,
       ...{
-        total:  doc?.total  ?? 0,
-        calls:  doc?.calls  ?? 0,
+        total: doc?.total ?? 0,
+        calls: doc?.calls ?? 0,
         emails: doc?.emails ?? 0,
-        texts:  doc?.texts  ?? 0,
+        texts: doc?.texts ?? 0,
         others: doc?.others ?? 0,
       },
       message: "Activities summary retrieved successfully",
@@ -684,21 +696,17 @@ const getActivitiesListById = async (req, res) => {
 
     doc.userId = user.name;
 
-    return res
-      .status(200)
-      .json({
-        success: true,
-        message: "Activity retrieved successfully",
-        data: doc,
-      });
+    return res.status(200).json({
+      success: true,
+      message: "Activity retrieved successfully",
+      data: doc,
+    });
   } catch (error) {
-    return res
-      .status(500)
-      .json({
-        success: false,
-        message: "Internal server error",
-        error: error.message,
-      });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
   }
 };
 

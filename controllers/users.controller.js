@@ -295,18 +295,20 @@ const createUserList = async (req, res) => {
 /* -------------------------- PUT ----------------------- */
 const updateUserList = async (req, res) => {
   try {
-    const { name, email, password, role, phone, hourlyRate, status } = req.body;
+    const { name, email, role, phone, hourlyRate, status } = req.body;
 
-    const usersList = await User.create({
-      name,
-      email,
-      password,
-      role,
-      department: role,
-      phone,
-      hourlyRate,
-      status,
-    });
+    const usersList = await User.findByIdAndUpdate(
+      { _id: req.params.id },
+      {
+        name,
+        email,
+        role,
+        department: role,
+        phone,
+        hourlyRate,
+        status,
+      }
+    );
     return res.status(201).json({
       success: true,
       message: "User updated successfully",

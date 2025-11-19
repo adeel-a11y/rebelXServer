@@ -1134,6 +1134,7 @@ const updateSaleOrder = async (req, res) => {
       data: saleOrder,
     });
   } catch (err) {
+    console.log(err);
     return res.status(500).json({ success: false, message: err.message });
   }
 };
