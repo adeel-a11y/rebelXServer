@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Activity = require("../models/Activity.model");
 const User = require("../models/User.model"); // <- for collection name
 const Client = require("../models/Client.model"); // <- for collection name
+const crypto = require("crypto");
 
 // buckets (case-insensitive match)
 const CALL_TYPES = ["call", "call_made", "phone", "phone_call"];
@@ -35,6 +36,21 @@ function endOfYear(year = new Date().getFullYear()) {
 
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function generateExternalId() {
+  const MAX_TRIES = 5;
+
+  for (let i = 0; i < MAX_TRIES; i++) {
+    // Example format: 7-char alphanumeric, like "6EEZ046"
+    const raw = crypto.randomBytes(4).toString("hex").toUpperCase(); // e.g. "A3F7C9D1"
+    const candidate = raw.slice(0, 7); // "A3F7C9D"
+
+    const exists = await Client.exists({ externalId: candidate });
+    if (!exists) return candidate;
+  }
+
+  throw new Error("Could not generate unique externalId");
 }
 
 // GET /api/activities/lists?page=1&limit=20&q=&type=call_made,email_sent&dateRange=today|this_month|this_year|prev_year&from=ISO&to=ISO
@@ -675,12 +691,18 @@ const getActivitiesListByClientId = async (req, res) => {
 
 const getActivitiesListById = async (req, res) => {
   try {
-    console.log(req.params.id);
+    console.log("id === >", req.params.id);
+
+    // Fetch activity by ID
     const doc = await Activity.findById({ _id: req.params.id }).lean();
+    console.log("doc === >", doc);
     if (!doc)
       return res.status(404).json({ success: false, message: "Not found" });
 
-    const client = await Client.findOne({ externalId: doc.clientId });
+    // Fetch client using $or to check both name and externalId
+    const client = await Client.findOne({
+      $or: [{ name: doc.clientId }, { externalId: doc.clientId }],
+    });
     if (!client)
       return res
         .status(404)
@@ -688,13 +710,18 @@ const getActivitiesListById = async (req, res) => {
 
     doc.clientId = client.name;
 
-    const user = await User.findOne({ email: doc.userId });
+    // Fetch user using $or to check both name and email
+    const user = await User.findOne({
+      $or: [{ name: doc.userId }, { email: doc.userId }],
+    });
     if (!user)
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
 
     doc.userId = user.name;
+
+    console.log("doc after === >", doc);
 
     return res.status(200).json({
       success: true,
@@ -712,7 +739,38 @@ const getActivitiesListById = async (req, res) => {
 
 const createActivityList = async (req, res) => {
   try {
-    const created = await Activity.create(req.body);
+    const { clientId, userId, type, description, createdAt } = req.body;
+
+    if (!clientId || !userId || !type) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required fields" });
+    }
+
+    const clientExternalId = await Client.findOne({ name: clientId });
+    if (!clientExternalId) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Client not found" });
+    }
+
+    const userExternalId = await User.findOne({ name: userId });
+    if (!userExternalId) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const trackingId = (await generateExternalId()) || "";
+
+    const created = await Activity.create({
+      clientId: clientExternalId.externalId,
+      userId: userExternalId.email,
+      type,
+      trackingId,
+      description,
+      createdAt,
+    });
     return res.status(201).json({ success: true, data: created });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -721,18 +779,70 @@ const createActivityList = async (req, res) => {
 
 const updateActivityList = async (req, res) => {
   try {
-    console.log(req.body);
+    const { id } = req.params;
+    const { clientId, userId, type, description, createdAt } = req.body;
+
+    console.log("id === ", id);
+    console.log("clientId === ", clientId);
+    console.log("userId === ", userId);
+    console.log("type === ", type);
+    console.log("description === ", description);
+    console.log("createdAt === ", createdAt);
+
+    // Fetch externalId for client
+    const clientExternalId = await Client.findOne({ name: clientId });
+    if (!clientExternalId) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Client not found" });
+    }
+
+    // Fetch externalId for user
+    const userExternalId = await User.findOne({ name: userId });
+    if (!userExternalId) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Generate or get the trackingId (if it's required to be updated)
+    const trackingId = (await generateExternalId()) || "";
+
+    const activity = await Activity.findById({ _id: id });
+    if (!activity) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Activity not found" });
+    }
+
+    console.log("activity === ", activity);
+
+    // Update the activity
     const updated = await Activity.findByIdAndUpdate(
-      { _id: req.params.id },
-      req.body,
+      { _id: id }, // Find the activity by ID
       {
-        new: true,
+        clientId: clientExternalId.externalId || activity.clientId, // Set client externalId
+        userId: userExternalId.email || activity.userId, // Set user email as userId
+        type: type || activity.type, // Set activity type
+        trackingId: trackingId || activity.trackingId, // Set trackingId (if required)
+        description: description || activity.description, // Set the description
+        createdAt: createdAt || activity.createdAt, // Set createdAt date (if applicable)
+      },
+      {
+        new: true, // Return the updated document
       }
     );
+
+    // If the activity wasn't found, return an error
     if (!updated)
-      return res.status(404).json({ success: false, message: "Not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Activity not found" });
+
+    // Return the updated activity
     return res.status(200).json({ success: true, data: updated });
   } catch (error) {
+    // Catch and return any server errors
     return res.status(500).json({ success: false, error: error.message });
   }
 };

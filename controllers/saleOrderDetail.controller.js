@@ -90,7 +90,7 @@ const createSaleOrderDetail = async (req, res) => {
       Price,
       Total,
     } = req.body;
-    console.log("data", req.body)
+    console.log("data", req.body);
 
     if (!Warehouse || !SKU || !Price || !Total) {
       return res
@@ -101,7 +101,7 @@ const createSaleOrderDetail = async (req, res) => {
     const recordId = crypto.randomBytes(4).toString("hex");
     // const OrderID = uuidv4();
 
-    console.log(req.body, recordId)
+    console.log(req.body, recordId);
 
     const saleOrderDetail = await SaleOrderDetail.create({
       RecordID: recordId,
@@ -116,7 +116,7 @@ const createSaleOrderDetail = async (req, res) => {
       Total,
     });
 
-    console.log("saleOrderDetail", saleOrderDetail)
+    console.log("saleOrderDetail", saleOrderDetail);
     return res.status(200).json({
       success: true,
       message: "Sale order detail created successfully",
@@ -193,7 +193,9 @@ const deleteSaleOrderDetail = async (req, res) => {
         .status(404)
         .json({ success: false, message: "ID is required" });
 
-    const saleOrderDetail = await SaleOrderDetail.findByIdAndDelete({ _id: id });
+    const saleOrderDetail = await SaleOrderDetail.findByIdAndDelete({
+      _id: id,
+    });
 
     return res.status(200).json({
       success: true,
