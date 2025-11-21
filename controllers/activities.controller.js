@@ -737,6 +737,77 @@ const getActivitiesListById = async (req, res) => {
   }
 };
 
+const getActivitiesListByUserPerMonth = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById({ _id: id });
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+
+    const pipelines = [
+      { $match: { userId: user?.email } },
+
+      // 1. Convert createdAt to a Date type
+      {
+        $addFields: {
+          convertedCreatedAt: {
+            $convert: {
+              input: "$createdAt",
+              to: "date",
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+
+      // 2. Group by numeric Year and Month to calculate activities
+      {
+        $group: {
+          // Grouping ID is now an object containing the numeric year and month
+          _id: {
+            year: { $year: "$convertedCreatedAt" },
+            month: { $month: "$convertedCreatedAt" },
+          },
+          activities: { $sum: 1 },
+          // Capture the full month name string for projection
+          monthName: {
+            $first: {
+              $dateToString: {
+                format: "%B", // %B gives the full month name (e.g., "October")
+                date: "$convertedCreatedAt",
+              },
+            },
+          },
+        },
+      },
+
+      // 3. Sort chronologically by Year then numeric Month
+      { $sort: { "_id.year": -1, "_id.month": -1 } },
+
+      // 4. Project the final output fields in the requested sequence: month, year, activities
+      {
+        $project: {
+          _id: 0,
+          month: "$monthName", // Field 1: Full month name
+          year: "$_id.year", // Field 2: Numeric year from the group ID
+          activities: "$activities", // Field 3: Activities count
+        },
+      },
+    ];
+
+    console.log("pipelines === ", pipelines);
+
+    const docs = await Activity.aggregate(pipelines);
+
+    return res.status(200).json({ success: true, data: docs?.slice(0, 12) });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 const createActivityList = async (req, res) => {
   try {
     const { clientId, userId, type, description, createdAt } = req.body;
@@ -863,6 +934,7 @@ module.exports = {
   getActivitiesSummary,
   getActivitiesListByClientId,
   getActivitiesListById,
+  getActivitiesListByUserPerMonth,
   createActivityList,
   updateActivityList,
   deleteActivityList,

@@ -4,6 +4,7 @@ const {
   getActivitiesSummary,
   getActivitiesListByClientId,
   getActivitiesListById,
+  getActivitiesListByUserPerMonth,
   createActivityList,
   updateActivityList,
   deleteActivityList,
@@ -16,6 +17,7 @@ router.get("/lists", getActivitiesLists);
 router.get("/lists/summary", getActivitiesSummary);
 router.get("/lists/client/:clientId", getActivitiesListByClientId);
 router.get("/lists/:id", getActivitiesListById);
+router.get("/lists/user-activities-per-month/:id", getActivitiesListByUserPerMonth);
 
 // POST
 router.post("/", createActivityList);
