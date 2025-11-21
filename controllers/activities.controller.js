@@ -798,11 +798,79 @@ const getActivitiesListByUserPerMonth = async (req, res) => {
       },
     ];
 
-    console.log("pipelines === ", pipelines);
-
     const docs = await Activity.aggregate(pipelines);
+    const averageActivitiesPerMonth =
+      docs?.map((doc) => doc.activities)?.reduce((a, b) => a + b, 0) /
+      docs?.length;
 
-    return res.status(200).json({ success: true, data: docs?.slice(0, 12) });
+    return res.status(200).json({
+      success: true,
+      user,
+      monthlyActivites: docs?.slice(0, 12),
+      average: averageActivitiesPerMonth,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+const getActivitySummaryByUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById({ _id: id });
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+
+    // 1) Query ko await karo taake real array mile
+    const activities = await Activity.find({ userId: user.email }).lean();
+
+    // 2) Count nikalne ke liye filter + length use karo
+    const activitySummary = {
+      totalActivities: activities.length,
+      calls: activities.filter(
+        (a) => a.type === "Call" || a.type === "call_made"
+      ).length,
+      emails: activities.filter(
+        (a) => a.type === "email_sent" || a.type === "Email"
+      ).length,
+      texts: activities.filter((a) => a.type === "Text").length,
+      others: activities.filter((a) =>
+        [
+          "created",
+          "note_added",
+          "meeting_scheduled",
+          "status_changed",
+        ].includes(a.type)
+      ).length,
+    };
+
+    return res.status(200).json({ success: true, summary: activitySummary });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+const getRecentActivitiesByUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById({ _id: id });
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+
+    // 1) Query ko await karo taake real array mile
+    const activities = await Activity.find({ userId: user.email }).lean();
+
+    // 2) Count nikalne ke liye filter + length use karo
+    // Recent Activities 5
+    const recentActivities = activities
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 5);
+
+    return res.status(200).json({ success: true, recentActivities });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -935,6 +1003,8 @@ module.exports = {
   getActivitiesListByClientId,
   getActivitiesListById,
   getActivitiesListByUserPerMonth,
+  getActivitySummaryByUser,
+  getRecentActivitiesByUser,
   createActivityList,
   updateActivityList,
   deleteActivityList,
