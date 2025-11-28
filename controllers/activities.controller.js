@@ -312,15 +312,23 @@ const getActivitiesLists = async (req, res) => {
 
 const getActivitiesSummary = async (req, res) => {
   try {
-    const externalId = String(req.query.externalId || "").trim();
+    // ✅ optional filters
+    const externalId = String(req.query.externalId || "").trim(); // clientId
+    const userId = String(req.query.userId || "").trim();        // userId (email ya jo bhi store hai)
 
     const pipeline = [];
 
-    // (0) Client filter (agar chahiye)
+    // (0) Client / User filter (agar chahiye)
+    const match = {};
     if (externalId) {
-      pipeline.push({ $match: { clientId: externalId } });
-      // NOTE: agar aapke Activity.clientId me "client name" hota hai,
-      // to yahan pehle Client find karke { clientId: client.name } match karein.
+      match.clientId = externalId;
+    }
+    if (userId) {
+      match.userId = userId;
+    }
+
+    if (Object.keys(match).length > 0) {
+      pipeline.push({ $match: match });
     }
 
     // 1) normalize type -> lowercase trimmed
@@ -361,15 +369,14 @@ const getActivitiesSummary = async (req, res) => {
     });
 
     const [doc] = await Activity.aggregate(pipeline);
+
     return res.status(200).json({
       success: true,
-      ...{
-        total: doc?.total ?? 0,
-        calls: doc?.calls ?? 0,
-        emails: doc?.emails ?? 0,
-        texts: doc?.texts ?? 0,
-        others: doc?.others ?? 0,
-      },
+      total: doc?.total ?? 0,
+      calls: doc?.calls ?? 0,
+      emails: doc?.emails ?? 0,
+      texts: doc?.texts ?? 0,
+      others: doc?.others ?? 0,
       message: "Activities summary retrieved successfully",
     });
   } catch (err) {
@@ -379,7 +386,7 @@ const getActivitiesSummary = async (req, res) => {
 
 const getActivitiesListByClientId = async (req, res) => {
   try {
-    // 1. pagination (same logic as getActivitiesLists)
+    // 1. pagination
     const pageRaw = parseInt(req.query.page, 10);
     const limitRaw = parseInt(req.query.limit, 10);
     const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
@@ -387,33 +394,52 @@ const getActivitiesListByClientId = async (req, res) => {
     const perPage = Math.min(perReq, 100); // hard cap 100 like main
     const skip = (page - 1) * perPage;
 
-    // 2. sorting (reuse same style)
+    // 2. sorting
     const sortBy = req.query.sortBy || "createdAt";
     const sortDir = (req.query.sort || "desc").toLowerCase() === "asc" ? 1 : -1;
 
-    // 3. base filters
-    // we ALWAYS filter by clientId (from route param)
-    const clientIdParam = req.params.clientId; // this is the client we care about
+    // 3. base filters – EITHER client OR user (or both as OR)
+    const clientIdParam = req.params.clientId; // optional
+    const userIdParam = req.params.userId;     // optional
 
-    const baseMatch = {
-      clientId: clientIdParam,
-    };
+    let baseMatch = {};
+    const idClauses = [];
 
-    // Optional search "q" within that client's activities
+    if (clientIdParam) {
+      idClauses.push({ clientId: clientIdParam });
+    }
+
+    if (userIdParam) {
+      idClauses.push({ userId: userIdParam });
+    }
+
+    if (idClauses.length === 1) {
+      baseMatch = idClauses[0];                // only client OR only user
+    } else if (idClauses.length > 1) {
+      baseMatch = { $or: idClauses };          // client OR user
+    }
+    // if length === 0 → baseMatch = {} (no id filter, all activities)
+
+    // Optional search "q" within those activities
     if (req.query.q) {
       const rx = new RegExp(req.query.q, "i");
-      baseMatch.$or = [
-        { description: rx },
-        { trackingId: rx },
-        { clientId: rx },
-        { userId: rx },
-        { type: rx },
-      ];
-      // BUT we still must enforce the clientId match.
-      // Easiest way: wrap the whole thing in $and.
-      // If we added $or above, restructure:
-      baseMatch.$and = [{ clientId: clientIdParam }];
-      delete baseMatch.clientId;
+
+      const textClause = {
+        $or: [
+          { description: rx },
+          { trackingId: rx },
+          { clientId: rx },
+          { userId: rx },
+          { type: rx },
+        ],
+      };
+
+      // combine id filter (if any) + text search with AND
+      if (Object.keys(baseMatch).length > 0) {
+        baseMatch = { $and: [baseMatch, textClause] };
+      } else {
+        baseMatch = textClause;
+      }
     }
 
     // Optional type[] filter (same normalization rules as main)
@@ -441,18 +467,29 @@ const getActivitiesListByClientId = async (req, res) => {
         }
       }
 
-      // attach to the right level depending on if we used $and/$or above
       if (inList.length) {
         const typeFilter = { type: { $in: inList } };
+
         if (baseMatch.$and) {
           baseMatch.$and.push(typeFilter);
         } else {
-          baseMatch.type = { $in: inList };
+          baseMatch = {
+            ...(Object.keys(baseMatch).length ? baseMatch : {}),
+            ...(Object.keys(baseMatch).length ? {} : {}),
+          };
+
+          if (Object.keys(baseMatch).length) {
+            // already has some conditions, wrap into $and
+            baseMatch = { $and: [baseMatch, typeFilter] };
+          } else {
+            // only type filter
+            baseMatch = typeFilter;
+          }
         }
       }
     }
 
-    // 4. date range filters (reuse same logic)
+    // 4. date range filters
     let dateFrom = null,
       dateTo = null;
     const preset = req.query.dateRange;
@@ -485,7 +522,7 @@ const getActivitiesListByClientId = async (req, res) => {
 
     const hasDateFilter = Boolean(dateFrom || dateTo);
 
-    // 5. collection names (just like main fn)
+    // 5. collection names
     const usersColl = User.collection.name;
     const clientsColl = Client.collection.name;
 
@@ -524,13 +561,12 @@ const getActivitiesListByClientId = async (req, res) => {
       total = await Activity.countDocuments(baseMatch);
     }
 
-    // 7. main pipeline (copy of getActivitiesLists with baseMatch locked)
+    // 7. main pipeline
     const pipeline = [
       { $match: baseMatch },
 
       ...(hasDateFilter
         ? [
-            // normalize for date comparison
             {
               $addFields: {
                 _createdAtDate: {
@@ -558,7 +594,7 @@ const getActivitiesListByClientId = async (req, res) => {
       { $skip: skip },
       { $limit: perPage },
 
-      // We'll still try to resolve readable client name & user display name
+      // resolve readable client name & user display name
       {
         $addFields: {
           _clientIdStr: {
@@ -583,7 +619,7 @@ const getActivitiesListByClientId = async (req, res) => {
         },
       },
 
-      // Join client data (match Activity.clientId -> Client.externalId)
+      // Join client data (Activity.clientId -> Client.externalId)
       {
         $lookup: {
           from: clientsColl,
@@ -672,7 +708,7 @@ const getActivitiesListByClientId = async (req, res) => {
       allowDiskUse: true,
     });
 
-    // 8. response same shape as getActivitiesLists
+    // 8. response
     return res.status(200).json({
       rows: docs,
       meta: {
@@ -691,8 +727,6 @@ const getActivitiesListByClientId = async (req, res) => {
 
 const getActivitiesListById = async (req, res) => {
   try {
-    console.log("id === >", req.params.id);
-
     // Fetch activity by ID
     const doc = await Activity.findById({ _id: req.params.id }).lean();
     console.log("doc === >", doc);
